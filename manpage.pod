@@ -1,0 +1,7 @@
+=head1 NAME
+
+lazybrake - A command-line wrapper for HandBrakeCLI that streamlines and automates ripping
+
+=head1 SYNOPSIS
+
+lazybrake [OPTIONS] [<title> ...]

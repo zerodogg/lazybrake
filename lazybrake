@@ -1,0 +1,888 @@
+#!/usr/bin/env perl6
+# lazybrake - A command-line wrapper for HandBrakeCLI that streamlines and
+# automates ripping
+#
+# Copyright (C) Eskild Hustvedt 2016
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# This POD is here to point any end-user towards the manpage.
+=begin pod
+For end-user documentation, see the manpage (man lazybrake, or perldoc
+manpage.pod).  The documentation contained within lazybrake itself contains
+details on its implementation.
+=end pod
+
+use v6;
+
+my Real $version = 0.1;
+
+#| Class that handles all of the actual ripping etc.
+class LazyBrake
+{
+    has Int  $.verbosity = 0;
+    has Int  $.min-duration = 900;
+    has Int  $.max-duration;
+    has Str  $.subtitle;
+    has Str  $.name;
+    has Str  $.device;
+    has Bool $.scan;
+    has Bool $.eject   = True;
+    has Bool $.dry-run = False;
+    has Bool $.try-dvdnav = True;
+    has Bool $.movie;
+    has Bool $.tv;
+    has Bool $!looping = False;
+
+    #| Returns metadata about an mp4 file using 'mp4info'
+    method MP4Info (Str $file) returns Hash
+    {
+        my %info = ();
+
+        my $in = run 'mp4info',$file, :out, :err;
+        for $in.out.lines -> $entry is copy
+        {
+            next if $entry !~~ /^\d/;
+            $entry ~~ s:g/\t/ /;
+            my $track  = $entry;
+            my $type   = $entry;
+            my $length = $entry;
+            $track  ~~ s/:s^(\d+)\s+.+/$0/;
+            $type   ~~ s/:s^\d+\s+(\S+)\s+.+/$0/;
+            $length ~~ s/:s^.*\s(\S+)\s+secs\,.*/$0/;
+            %info{$type} = $length;
+        }
+        return %info;
+    }
+
+    #| Validate that a file was properly ripped by looking at the file size and video length
+    method !validateFile (Str :$file!, Rat :$largestRipped = 0.0, Int :$duration!) returns Bool
+    {
+        if ! $file.IO.e
+        {
+            self!printv: "$file: failed validation due to non-existant file";
+            return False;
+        }
+
+        my %fileMeta           = self.MP4Info($file);
+
+        if %fileMeta<video>:exists
+        {
+            my $maxDuration = $duration*1.001;
+            my $minDuration = $duration*0.999;
+            if %fileMeta<video> >= $minDuration && %fileMeta<video> <= $maxDuration
+            {
+                return True;
+            }
+            else
+            {
+                self!printv: "$file: failed due to video track length validation";
+                self!printd: "mp4info reported the video track to be "~%fileMeta<video>~" seconds. This was compared to max[$maxDuration] and min[$minDuration]";
+                return False;
+            }
+        }
+
+        # This is a simple algorithm meant to verify that a file is at least of a minimum
+        # file size that we expect a DVD rip to be.
+        #
+        # 42 minutes of video is expected to be at least 190MiB
+        # 42*60 is 2520 seconds
+        # 190/2520 = 0.0753 =~ 0.075MiB/second
+        # Thus a file is expected to be at least length*0.075 MiB in size.
+        my Int constant $sizePerSecond = 0.075;
+
+        my Int $minSizeBytes = (($duration*$sizePerSecond)*1048576).Int;
+
+        if $file.IO.s < $minSizeBytes
+        {
+            self!printd: "$file: is smaller than the minimum file size expected for this file ($minSizeBytes bytes)";
+            return False;
+        }
+
+        # Drop "bytesPerSecond" checks if we have no $largestRipped
+        if $largestRipped == 0.0
+        {
+            return True;
+        }
+
+        my Int $validationTime = ($largestRipped.Int*0.70).Int;
+        my Int $bytesPerSecond = ($file.IO.s / $duration).Int;
+
+        if $bytesPerSecond >= $largestRipped
+        {
+            return True;
+        }
+        else
+        {
+            self!printv: "$file: failed due to bytesPerSecond comparison";
+            self!printd: "bytesPerSecond[$bytesPerSecond] < largestRipped[$largestRipped]";
+            return False;
+        }
+
+    }
+
+    #| Check if we are in tv or movie mode
+    method !isMode(Str $checkType) returns Bool
+    {
+        if $.movie && $.tv
+        {
+            self.errOut('Both movie and tv is True. LazyBrake-class construction error');
+        }
+        if $checkType eq 'tv' && $.tv
+        {
+            return True;
+        }
+        elsif $checkType eq 'movie' && $.movie
+        {
+            return True;
+        }
+        return False;
+    }
+
+    #| Retrieve the HandBrakeCLI command-line, with basic parameters preconfigured
+    method !HDBCommand (*@args) returns Array
+    {
+        my @cmd = 'HandBrakeCLI','-i',$.device;
+        if !$.try-dvdnav
+        {
+            @cmd.push('--no-dvdnav');
+        }
+        @cmd.append(@args);
+        return @cmd;
+    }
+
+    #| Parses a HandBrakeCLI --scan output
+    method parseHDBScan (*@cmd) returns Hash
+    {
+        my $null = '/dev/null'.IO.open;
+        self!printd: "Running: "~@cmd.join(' ');
+        my $in = run @cmd, :err, :out($null);
+        my $currentTitle = -1;
+        my $currentSubtype;
+        my %data = (
+            titleOrder => [],
+            titles     => {}
+        );
+
+        while $in.exitcode == -1 || $currentTitle == -1
+        {
+            for $in.err.lines -> $line
+            {
+                my $entry = $line;
+
+                if $entry ~~ s/:s^\+ title (\d+)\:/$0/
+                {
+                    $entry = $entry.Int;
+                    self!printd: "Found title $entry";
+                    $currentSubtype = Nil;
+                    $currentTitle   = $entry;
+                    %data{'titleOrder'}.push($entry);
+                    %data{'titles'}.{$currentTitle} = {
+                        subtitles => {},
+                        mainTitle => False,
+                    };
+                }
+                elsif $currentTitle == -1
+                {
+                    last;
+                }
+                elsif $entry ~~ s/:s^\s+\+\s+duration\:\s+//
+                {
+                    my $time = $entry.split(/\:/);
+                    my Int $len = ( +$time[2] ) + (+$time[1] *60) + ((+$time[0] *60)*60);
+                    %data{'titles'}.{$currentTitle}.{'duration'} = {
+                        hours          => $time[0],
+                        minutes        => $time[1],
+                        seconds        => $time[2],
+                        totalInSeconds => $len.Int,
+                    };
+                }
+                elsif $entry ~~ /:s^  \+ Main Feature/ && $currentTitle.defined
+                {
+                    %data<titles>.{$currentTitle}.<mainTitle> = True;
+                }
+                elsif $entry ~~ s/:s^  \+ (.+)\:\s*$/$0/
+                {
+                    $currentSubtype = $entry;
+                }
+                elsif $entry ~~ s/:s^    \+\s*// && $currentSubtype
+                {
+                    if $currentSubtype eq 'subtitle tracks' || $currentSubtype eq 'audio tracks'
+                    {
+                        my $saveTo;
+                        if $currentSubtype eq 'subtitle tracks'
+                        {
+                            $saveTo = 'subtitles';
+                        }
+                        elsif $currentSubtype eq 'audio tracks'
+                        {
+                            $saveTo = 'audio';
+                        }
+
+                        my $trackID   = $entry;
+                        my $trackName = $entry;
+                        my $trackISO  = $entry;
+
+                        $trackID   ~~ s/^\s*(\d+)\,.*/$0/;
+                        $trackName ~~ s/^\s*\d+\,\s+(\S+)\s+.*/$0/;
+                        $trackISO  ~~ s/^.+iso\d+\-\d+\:\s+(\S+)\).*/$0/;
+                        if ! %data<titles>.{$currentTitle}.{$saveTo}.{$trackISO}
+                        {
+                            %data<titles>.{$currentTitle}.{$saveTo}.{$trackISO} = {
+                                name => $trackName,
+                                id   => $trackID
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        return %data;
+    }
+
+    #| Performs a scan with HandBrakeCLI --scan and returns its data in a hash
+    method performHDBScan () returns Hash
+    {
+        my %result;
+        my $success = False;
+        my @cmd = self!HDBCommand('--min-duration',$.min-duration,'--scan','-t',0);
+        try
+        {
+            %result = self.parseHDBScan: @cmd;
+            $success = True;
+        }
+
+        if !$.try-dvdnav
+        {
+            if !$success
+            {
+                self.errOut: "Scanning failed, try to enable dvdnav";
+            }
+            return %result;
+        }
+
+        if !$success
+        {
+            say "error - use of dvdnav failed, falling back to HandBrakeCLI --no-dvdnav";
+        }
+
+        if %result<titleOrder>.elems <= 1
+        {
+            say "questionable result - trying without dvdnav";
+            $success = False;
+        }
+
+        if !$success
+        {
+            print "Scanning without dvdnav...";
+            @cmd.push('--no-dvdnav');
+            %result = self.parseHDBScan: @cmd;
+        }
+        return %result;
+    }
+
+    #| Parses isoinfo, to get metadata about a disc
+    method parseISOInfo ()
+    {
+        my $in = run 'isoinfo','-i',$.device,'-d', :out, :err;
+        my ($volume_id, $volume_size);
+        for $in.out.lines -> $entry
+        {
+            if $entry ~~ /:s.*Volume id\:\s+/
+            {
+                $volume_id = $entry;
+                $volume_id ~~ s/:s.*Volume id\:\s+//;
+            }
+            elsif $entry ~~ /:s.*Volume size is\:\s+/
+            {
+                $volume_size = $entry;
+                $volume_size ~~ s/:s.*Volume size is\:\s+//;
+            }
+        }
+        return $volume_id, $volume_size;
+    }
+
+    #| Handle ripping of a single disc
+    method handleDisc (:$name = $.name, *@titles)
+    {
+        print "Scanning disc...";
+        my ($volume_id,$volume_size) = self.parseISOInfo();
+        print ".";
+        my %scanData = self.performHDBScan();
+        print "done\n";
+        if %scanData<titleOrder>.elems == 0
+        {
+            self.errOut: "Found no titles on this disc, it does not appear to be a DVD video disc.";
+        }
+        if @titles.elems == 0
+        {
+            if $.max-duration && self!isMode('tv')
+            {
+                for @(%scanData<titleOrder>) -> $title
+                {
+                    if %scanData<titles>.{$title}.<duration>.<totalInSeconds> < $.max-duration
+                    {
+                        @titles.push($title);
+                    }
+                    else
+                    {
+                        self!printv: "Skipping title $title because it is too long ("~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~" seconds ["~%scanData<titles>.{$title}.<duration>.<hours>~":"~%scanData<titles>.{$title}.<duration>.<minutes>~":"~%scanData<titles>.{$title}.<duration>.<seconds>~")";
+                    }
+                }
+            }
+            elsif self!isMode('movie')
+            {
+                for @(%scanData<titleOrder>) -> $title
+                {
+                    if (%scanData<titles>.{$title}.<mainTitle>)
+                    {
+                        @titles.push($title);
+                    }
+                }
+                if @titles.elems == 0
+                {
+                    self.errOut: "Found no 'main title' on this disc. Try using --tv mode";
+                }
+            }
+            else
+            {
+                @titles = @(%scanData<titleOrder>);
+            }
+            if @titles > 15
+            {
+                self.errOut: "Disc looks like it has DRM-by-obscurity (found "~@titles.elems~" titles), you will need to\nspecify titles manually. Exiting.";
+            }
+        }
+        if @titles.elems == 0
+        {
+            self.errOut: "Found no titles on this disc. Try changing --min-duration and --max-duration";
+        }
+        self.ripTitles(
+            :$name,
+            :%scanData,
+            :$volume_id,
+            :$volume_size,
+            :@titles
+        );
+        if $.eject
+        {
+            if $.dry-run && !$!looping
+            {
+                say "Would have ejected the disc if not for --dry-run"
+            }
+            else
+            {
+                run 'eject', $.device;
+            }
+        }
+    }
+
+    #| Outputs data from a HandBrakeCLI --scan (as returned by performHDBScan) and exits
+    method outputScanData (:$min-duration)
+    {
+        print "Scanning disc...";
+        my %scanData = self.performHDBScan();
+        my ($volume_id,$volume_size) = self.parseISOInfo();
+        print "done\n";
+        say "Disc reports its name as $volume_id";
+        for @(%scanData<titleOrder>) -> $title
+        {
+            print "Title $title";
+            my $len = %scanData<titles>.{$title}.<duration>.<seconds>;
+            $len   += %scanData<titles>.{$title}.<duration>.<minutes> *60;
+            $len   += (%scanData<titles>.{$title}.<duration>.<hours> *60)*60;
+            print sprintf(" (%-5d seconds [%02d:%02d:%02d])", $len, %scanData<titles>.{$title}.<duration>.<hours>, %scanData<titles>.{$title}.<duration>.<minutes>, %scanData<titles>.{$title}.<duration>.<seconds>);
+            if %scanData<titles>.{$title}.<subtitles>
+            {
+                print " (subtitles: "~%scanData<titles>.{$title}.<subtitles>.keys.join(', ')~")";
+            }
+            if %scanData<titles>.{$title}.<audio>
+            {
+                print " (audio: "~%scanData<titles>.{$title}.<audio>.keys.join(', ')~")";
+            }
+            if %scanData<titles>.{$title}.<mainTitle>
+            {
+                print " [MAIN TITLE]";
+            }
+            print "\n";
+        }
+        exit 0;
+    }
+
+    #| Construct a file name
+    method buildFileName (Int :$title!, :$volume_id!, :$volume_size!, Str :$extension = 'mp4', Str :$name!) returns Str
+    {
+        my $finalName;
+        if $name.defined && $name.chars > 0
+        {
+            $finalName = $name~'_';
+        }
+        my $padTitle = sprintf "%02d",$title;
+        $finalName ~= $padTitle~'_'~$volume_id~'_'~$volume_size~'.'~$extension;
+        return $finalName;
+    }
+
+    #| Rip an array of titles, validating their size etc. once done and
+    #| re-ripping if needed
+    method ripTitles(:$name!, :$volume_id, :$volume_size, :$preset = 'Normal', :%scanData!, :@titles!) returns Bool
+    {
+        say "Queued "~@titles.elems~" titles for ripping: @titles.join(', ')";
+        my $jobNumber = 1;
+        my @ripped;
+        my $largestRipped = 0;
+        for @titles -> $title
+        {
+            my $filename = self.ripTitle(
+                :$name,
+                :$volume_id,
+                :$volume_size,
+                :$title,
+                metadata => %(%scanData<titles>.{$title}),
+                jobTotal => @titles.elems,
+                jobNo    => $jobNumber,
+            );
+
+            if $filename.IO.e
+            {
+                my $bytesPerSecond = $filename.IO.s / %scanData<titles>.{$title}.<duration>.<totalInSeconds>;
+
+                @ripped.push({
+                    jobNo          => $jobNumber,
+                    filename       => $filename,
+                    title          => $title,
+                    metadata       => %(%scanData<titles>.{$title}),
+                    bytesPerSecond => $bytesPerSecond,
+                    duration       => %scanData<titles>.{$title}.<duration>.<totalInSeconds>,
+                });
+                if $bytesPerSecond > $largestRipped
+                {
+                    $largestRipped = $bytesPerSecond;
+                }
+            }
+            $jobNumber++;
+        }
+        if @titles.elems > 1
+        {
+            @titles = ();
+            $jobNumber = 1;
+            print "Validating files...";
+            for @ripped -> %processed
+            {
+                if ! self!validateFile(
+                    file          => %processed<filename>,
+                    largestRipped => $largestRipped,
+                    duration      => %processed<duration>
+                )
+                {
+                    self!printv: %processed<filename>~" failed validation, queuing for re-rip";
+                    @titles.push(%processed);
+                }
+            }
+            say "done";
+            if @titles
+            {
+                say "Queued "~@titles.elems~" titles for re-ripping "~( $.try-dvdnav ?? '(without dvdnav) ' !! '')~"due to incomplete rips"~@titles.map({ .<title> }).join(', ');
+                for @titles -> %entry
+                {
+                    %entry<filename>.IO.unlink;
+                    my $title = %entry<title>;
+                    my $filename = self.ripTitle(
+                        :$name,
+                        :$volume_id,
+                        :$volume_size,
+                        :$title,
+                        metadata  => %(%scanData<titles>.{$title}),
+                        jobTotal  => @titles.elems,
+                        jobNo     => $jobNumber,
+                        no-dvdnav => True,
+                    );
+
+                    if ! self!validateFile(
+                        file          => $filename,
+                        largestRipped => $largestRipped,
+                        duration      => %scanData<titles>.{$title}.<duration>.<totalInSeconds>
+                    )
+                    {
+                        say "$filename: failed validation, even after re-rip.";
+                        say "It might not have been ripped properly, you should verify the file manually.";
+                    }
+                    $jobNumber++;
+                }
+            }
+        }
+        return True;
+    }
+
+    #| Rip a single title
+    method ripTitle(Int :$title!, :$name!, :$volume_id!, :$volume_size!, :%metadata!, :$jobNo!, :$jobTotal!, :$preset = 'Normal', Bool :$no-dvdnav is copy = False) returns Str
+    {
+        my $filename = self.buildFileName(:$title, :$name, :$volume_id, :$volume_size);
+        my $subtitle = $.subtitle;
+        if $filename.IO.e
+        {
+            print "$filename: already exists (title $title)";
+            if self!validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>)
+            {
+                say ", skipping this title";
+                return $filename;
+            }
+            say ", but it failed validation. Re-ripping.";
+            $filename.IO.unlink;
+        }
+        my @command = self!HDBCommand('-v0', '-t', $title, '-o', $filename,'--preset',$preset);
+        if $subtitle && %metadata<subtitles> && !%metadata.<subtitles>.{$subtitle}
+        {
+            for %metadata<subtitles>.keys -> $subkey
+            {
+                if %metadata<subtitles>.{$subkey} && (%metadata<subtitles>.{$subkey}.<name>:exists) && %metadata<subtitles>.{$subkey}.<name> eq $subtitle
+                {
+                    $subtitle = $subkey;
+                    self!printv: "Remapped $.subtitle to $subtitle";
+                    last;
+                }
+            }
+        }
+        if $subtitle && %metadata<subtitles>.{$subtitle}
+        {
+            @command.push('--subtitle',%metadata<subtitles>.{$subtitle}.<id>);
+        }
+        elsif $subtitle
+        {
+            say "Title $title has no subtitle \"$.subtitle\": ripping without subtitles";
+        }
+        if !$.dry-run
+        {
+            if $jobTotal > 1
+            {
+                print '['~(sprintf "%02d",$jobNo)~'/'~(sprintf "%02d",$jobTotal)~'] ';
+            }
+            if $no-dvdnav && $.try-dvdnav
+            {
+                @command.push('--no-dvdnav');
+            }
+            say "Ripping title $title to $filename:";
+            self!printd: "Running: "~@command.join(' ');
+            if $.verbosity >= 199
+            {
+                run @command;
+            }
+            else
+            {
+                run @command, :err("/dev/null".IO.open);
+            }
+            if !$no-dvdnav && (!$filename.IO.e || !self!validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>))
+            {
+                if !$.try-dvdnav
+                {
+                    say "(error, trying to re-rip)";
+                }
+                else
+                {
+                    say "(error, trying to re-rip without using dvdnav)";
+                    @command.push('--no-dvdnav');
+                }
+                if $filename.IO.e
+                {
+                    $filename.IO.unlink;
+                }
+                self!printd: "Running: "~@command.join(' ');
+                if $.verbosity >= 199
+                {
+                    run @command;
+                }
+                else
+                {
+                    run @command, :err("/dev/null".IO.open);
+                }
+                if !$filename.IO.e
+                {
+                    say "Fatal error during ripping. Target file does not exist. Aborting.";
+                    exit 13;
+                }
+            }
+        }
+        else
+        {
+            say "Would have ripped title $title to $filename";
+        }
+        return $filename;
+    }
+
+    #| Check if a disc is present in the drive
+    method isDiscPresent() returns Bool
+    {
+        my $data = run 'udevadm', 'info', '-q','env','-n',$.device, :err('/dev/null'.IO.open), :out;
+        for $data.out.lines -> $line
+        {
+            if $line ~~ /ID_CDROM_MEDIA_DVD\=1/
+            {
+                return True;
+            }
+        }
+        return False;
+    }
+
+    #| Output verbose text
+    method !printv(Str $message, Int $level = 1)
+    {
+        if $.verbosity >= $level
+        {
+            if $level == 99
+            {
+                print "Debug: ";
+            }
+            print $message~"\n";
+        }
+    }
+
+    #| Output debugging text
+    method !printd(Str $message)
+    {
+        self!printv($message,99);
+    }
+
+    #| Error out
+    method errOut(Str $reason, Int $retVal = 1)
+    {
+        $*ERR.print($reason~"\n");
+        exit $retVal;
+    }
+
+    #| Do a rip loop
+    method ripLoop (Int :$disc-no! is rw, *@titles)
+    {
+        $!looping = True;
+
+        # Handle SIGINT gracefully, as it is our primary exit method when looping
+        signal(SIGINT).tap({
+            exit 0;
+        });
+        # Output a waiting message if there's no disk in the drive when we enter the loop
+        if !self.isDiscPresent
+        {
+            say "Waiting for disc to be inserted...";
+        }
+        # We loop indefinetely
+        while True
+        {
+            # Sleep for five second periods until we have a disc in the drive
+            while ! self.isDiscPresent
+            {
+                sleep(5);
+            }
+            # Generate a disc specific name
+            my $discName = '';
+            if $.name.defined && $.name.chars > 0
+            {
+                $discName = $.name~'-';
+            }
+            $discName ~= 'D'~sprintf("%02d",$disc-no);
+
+            say "Processing disc $disc-no";
+            # Run the disc generation
+            self.handleDisc(
+                name => $discName,
+                @titles
+            );
+
+            say "Finished ripping disc $disc-no\n";
+
+            $disc-no++;
+            # Give the drive two seconds to finish ejecting before we poll it
+            sleep 2;
+        }
+    }
+}
+
+#|{ Print formatted --help output.
+  Usage: printHelp('-shortoption', '--longoption', 'description');
+  Description will be reformatted to fit within a normal terminal }
+sub printHelp (Str $short is copy, Str $long is copy, Str $desc)
+{
+    # The generated description that will be printed in the end
+    my $GeneratedDesc;
+    # The current line of the description
+    my $currdesc = '';
+    # The maximum length any line can be
+    my Int $maxlen = 80;
+    # The length the options take up
+    my Int $optionlen = 23;
+    # Check if the short/long are LONGER than optionlen, if so, we need
+    # to do some additional magic to take up only $maxlen.
+    # The +1 here is because we always add a space between them, no matter what
+    if (($short.chars + $long.chars) + 1) > $optionlen
+    {
+        $optionlen = $short.chars + $long.chars + 1;
+    }
+    # Split the description into lines
+    for $desc.split(' ') -> $part
+    {
+        if $GeneratedDesc.defined
+        {
+            if ($currdesc.chars + $part.chars + 1 + 24) > $maxlen
+            {
+                $GeneratedDesc ~= "\n";
+                $currdesc = '';
+            }
+            else
+            {
+                $currdesc ~= ' ';
+                $GeneratedDesc ~= ' ';
+            }
+        }
+        $currdesc ~= $part;
+        $GeneratedDesc ~= $part;
+    }
+    # Print it all
+    for $GeneratedDesc.split("\n") -> $description
+    {
+        say sprintf "%-4s %-22s %s", $short,$long,$description;
+        $short = '';$long = '';
+    }
+    # Something went wrong
+    die('Option mismatch') if !$GeneratedDesc;
+    # Succeed
+    return True;
+}
+
+#| Command-line parsing
+sub MAIN (
+    Str :$device  is copy,
+    Int :$max-duration = 3600,
+    Int :$min-duration = 900,
+    Int :$disc-no is copy = 1,
+    Str :$name         = '',
+    Bool :$scan        = False,
+    Bool :$tv     is copy = False,
+    Bool :$movie  is copy = False,
+    Bool :$dry-run     = False,
+    Bool :$loop        = False,
+    Bool :$verbose     = False,
+    Bool :$debug       = False,
+    Bool :$full-debug  = False,
+    Bool :$no-eject    = False,
+    Bool :$no-dvdnav   = False,
+    Str :$subtitle,
+    *@title)
+{
+    my Int $verbosity = 0;
+    my Bool $eject = !$no-eject;
+    # Handle --device being missing
+    if ! $device.defined
+    {
+        if '/dev/sr0'.IO.e
+        {
+            $device = '/dev/sr0';
+        }
+        elsif '/dev/cdrom'.IO.e
+        {
+            $device = '/dev/cdrom';
+        }
+        else
+        {
+            LazyBrake.new.errOut: "Failed to detect a DVD-rom, provide a --device on the command-line";
+        }
+    }
+    # Handle --movie and --tv
+    if ($tv == True && $movie == True)
+    {
+        LazyBrake.new.errOut: "--movie and --tv conflicts";
+    }
+    if ($tv == True)
+    {
+        $movie = False;
+    }
+    elsif ($movie)
+    {
+        $tv = False;
+    }
+    else
+    {
+        $tv = True;
+    }
+    # Handle --debug and --verbose
+    if $full-debug
+    {
+        $verbosity = 199;
+    }
+    elsif $debug
+    {
+        $verbosity = 99;
+    }
+    elsif $verbose
+    {
+        $verbosity = 1;
+    }
+    my $lazybrake = LazyBrake.new(
+        :$device,
+        :$min-duration,
+        :$name,
+        :$tv,
+        :$subtitle,
+        :$max-duration,
+        :$dry-run,
+        :$eject,
+        :$disc-no,
+        :$scan,
+        :$movie,
+        :$verbosity,
+        try-dvdnav => !$no-dvdnav,
+    );
+    # Output scan info if --scan was supplied
+    if $scan
+    {
+        $lazybrake.outputScanData(:$device,:$min-duration);
+    }
+    # Enter a rip loop if --loop was supplied
+    if $loop
+    {
+        $lazybrake.ripLoop(
+            :$disc-no,
+            device => $device,
+            @title
+        );
+    }
+    else
+    {
+        if ! $lazybrake.isDiscPresent()
+        {
+            $lazybrake.errOut: "Found no disc in drive $device";
+        }
+        $lazybrake.handleDisc(
+            @title
+        );
+    }
+}
+
+sub USAGE ()
+{
+    print "\n";
+    print 'Usage: '~$*PROGRAM-NAME.IO.basename~' [OPTIONS] [<title> ...]'~"\n";
+    print "\n";
+    print "Options:\n";
+    printHelp('' , '--help'             , 'View this help screen.');
+    printHelp('' , '--device=Str'       , 'Override the path to the DVD-Rom device.');
+    printHelp('' , '--max-duration=Int' , 'Set the max duration of a track to rip in seconds (when in TV mode), default is 3600.');
+    printHelp('' , '--min-duration=Int' , 'Set the minimum duration of a track to rip in seconds (when in TV mode), default is 900.');
+    printHelp('' , '--name=Str'         , 'Set the name prefix for files.');
+    printHelp('' , '--tv'               , 'Enable TV mode, rips several titles from a disc (ie. episodes) - the default.');
+    printHelp('' , '--movie'            , 'Enable movie mode, rips only the main title from a disc (ie. the movie itself).');
+    printHelp('' , '--dry-run'          , 'Don\'t actually rip anything, just output the messages.');
+    printHelp('' , '--loop'             , 'Loop, rip a disc, eject it, and then rip another disc once it is inserted. Useful when ripping multi-disc TV series or multiple movies.');
+    printHelp('' , '--subtitle=Str'     , 'Set a subtitle to rip.');
+    printHelp('' , '--disc-no=Int'      , 'Set the disc number for loop. Can be used to resume ripping on a disc other than 1.');
+    printHelp('' , '--no-eject'         , 'Don\'t eject the disc once finished ripping. Not usable with --loop.');
+    printHelp('' , '--verbose'          , 'Increase verbosity.');
+    printHelp('' , '--debug'            , 'Enable debug output.');
+}
