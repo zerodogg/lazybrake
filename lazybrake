@@ -352,7 +352,26 @@ class LazyBrake
                 }
                 if @titles.elems == 0
                 {
-                    self.errOut: "Found no 'main title' on this disc. Try using --tv mode";
+                    my @possibleTitles;
+                    for @(%scanData<titleOrder>) -> $title
+                    {
+                        if %scanData<titles>.{$title}.<duration>.<totalInSeconds> >= 4500
+                        {
+                            @possibleTitles.push($title);
+                        }
+                    }
+                    if @possibleTitles.elems == 0
+                    {
+                        self.errOut: "Found no 'main title' (or normal title lasting 75+ minutes) on this dics\nTry specifying the title number manually."
+                    }
+                    elsif @possibleTitles.elems > 1
+                    {
+                        self.errOut: "Found no 'main title' on this disc, and found multiple ("~@possibleTitles.elems~") titles over 75+ minutes\nTry specifying the title number manually."
+                    }
+                    else
+                    {
+                        @titles.push(@possibleTitles.shift);
+                    }
                 }
             }
             else
