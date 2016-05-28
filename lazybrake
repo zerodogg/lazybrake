@@ -280,7 +280,7 @@ class LazyBrake
         if %result<titleOrder>.elems <= 1
         {
             say "questionable result - trying without dvdnav";
-            self.printd: "Only got "~%result<titleOrder>elems~" titles, not trusting the result, will retry without libdvdnav";
+            self!printd: "Only got "~%result<titleOrder>.elems~" titles, not trusting the result, will retry without libdvdnav";
             $success = False;
         }
 
