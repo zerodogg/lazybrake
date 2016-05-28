@@ -35,6 +35,7 @@ class LazyBrake
     has Int  $.min-duration = 900;
     has Int  $.max-duration;
     has Str  $.subtitle;
+    has Str  $.audiolang;
     has Str  $.name;
     has Str  $.device;
     has Bool $.scan;
@@ -544,11 +545,86 @@ class LazyBrake
         return True;
     }
 
+    #| Get an array of audio/subtitle params for HandBrakeCLI
+    method buildAudioSubParams(:%metadata!, :$title!)
+    {
+        my @params;
+        my $type;
+
+        for <subtitles audio> -> $type
+        {
+            my @final;
+            my $entries;
+            my $dataType;
+            if ($type eq 'subtitles')
+            {
+                $entries = $.subtitle;
+                $dataType = 'subtitles';
+            }
+            elsif ($type eq 'audio')
+            {
+                $entries = $.audiolang;
+                $dataType = 'audio';
+            }
+            else
+            {
+                die;
+            }
+
+            if (!$entries)
+            {
+                next;
+            }
+
+            for $entries.split(',') -> $entries
+            {
+                my $origTitle = $entries;
+                if $entries && %metadata{$dataType} && !%metadata.{$dataType}.{$entries}
+                {
+                    for %metadata{$dataType}.keys -> $subkey
+                    {
+                        if %metadata{$dataType}.{$subkey} && (%metadata{$dataType}.{$subkey}.<name>:exists) && %metadata{$dataType}.{$subkey}.<name> eq $entries
+                        {
+                            self!printv: "Remapped $entries to $subkey";
+                            last;
+                        }
+                    }
+                }
+                if $entries && %metadata{$dataType}.{$entries}
+                {
+                    @final.push(%metadata{$dataType}.{$entries}.<id>);
+                }
+                else
+                {
+                    if ($dataType eq 'subtitles')
+                    {
+                        say "Title $title has no subtitle \"$origTitle\": skipping this subtitle";
+                    }
+                    elsif ($dataType eq 'audio')
+                    {
+                        say "Title $title has no audio language \"$origTitle\": skipping this language";
+                    }
+                }
+            }
+            if @final.elems > 0
+            {
+                if ($dataType eq 'subtitles')
+                {
+                    @params.push('--subtitle',@final.join(','));
+                }
+                elsif ($dataType eq 'audio')
+                {
+                    @params.push('--audio',@final.join(','));
+                }
+            }
+        }
+
+        return @params;
+    }
     #| Rip a single title
     method ripTitle(Int :$title!, :$name!, :$volume_id!, :$volume_size!, :%metadata!, :$jobNo!, :$jobTotal!, :$preset = 'Normal', Bool :$no-dvdnav is copy = False) returns Str
     {
         my $filename = self.buildFileName(:$title, :$name, :$volume_id, :$volume_size);
-        my $subtitle = $.subtitle;
         if $filename.IO.e
         {
             print "$filename: already exists (title $title)";
@@ -561,38 +637,7 @@ class LazyBrake
             $filename.IO.unlink;
         }
         my @command = self!HDBCommand('-v0', '-t', $title, '-o', $filename,'--preset',$preset);
-        my @subtitles;
-        if $subtitle
-        {
-            for $subtitle.split(',') -> $subtitle
-            {
-                my $origTitle = $subtitle;
-                if $subtitle && %metadata<subtitles> && !%metadata.<subtitles>.{$subtitle}
-                {
-                    for %metadata<subtitles>.keys -> $subkey
-                    {
-                        if %metadata<subtitles>.{$subkey} && (%metadata<subtitles>.{$subkey}.<name>:exists) && %metadata<subtitles>.{$subkey}.<name> eq $subtitle
-                        {
-                            $subtitle = $subkey;
-                            self!printv: "Remapped $.subtitle to $subtitle";
-                            last;
-                        }
-                    }
-                }
-                if $subtitle && %metadata<subtitles>.{$subtitle}
-                {
-                    @subtitles.push(%metadata<subtitles>.{$subtitle}.<id>);
-                }
-                else
-                {
-                    say "Title $title has no subtitle \"$origTitle\": skipping this subtitle";
-                }
-            }
-            if @subtitles.elems > 0
-            {
-                @command.push('--subtitle',@subtitles.join(','));
-            }
-        }
+        @command.append: self.buildAudioSubParams(:%metadata,:$title);
         if !$.dry-run
         {
             if $jobTotal > 1
@@ -806,6 +851,7 @@ sub MAIN (
     Bool :$no-eject    = False,
     Bool :$no-dvdnav   = False,
     Str :$subtitle,
+    Str :$audiolang,
     *@title)
 {
     my Int $verbosity = 0;
@@ -862,6 +908,7 @@ sub MAIN (
         :$name,
         :$tv,
         :$subtitle,
+        :$audiolang,
         :$max-duration,
         :$dry-run,
         :$eject,
@@ -912,7 +959,8 @@ sub USAGE ()
     printHelp('' , '--movie'            , 'Enable movie mode, rips only the main title from a disc (ie. the movie itself).');
     printHelp('' , '--dry-run'          , 'Don\'t actually rip anything, just output the messages.');
     printHelp('' , '--loop'             , 'Loop, rip a disc, eject it, and then rip another disc once it is inserted. Useful when ripping multi-disc TV series or multiple movies.');
-    printHelp('' , '--subtitle=Str'     , 'Set a subtitle to rip. Accepts a comma-delimited list of subtitles.');
+    printHelp('' , '--subtitle=Str'     , 'Set a subtitle to rip. Accepts a comma-delimited list of subtitles (default is to not rip any subtitles).');
+    printHelp('' , '--audiolang=Str'    , 'Set the audio language. Accepts a comma-delimited list of languages (if omitted, the default language track will be ripped).');
     printHelp('' , '--disc-no=Int'      , 'Set the disc number for loop. Can be used to resume ripping on a disc other than 1.');
     printHelp('' , '--no-eject'         , 'Don\'t eject the disc once finished ripping. Not usable with --loop.');
     printHelp('' , '--verbose'          , 'Increase verbosity.');
