@@ -112,7 +112,8 @@ the default language track.
 
 Select a subtitle to rip. I<Str> can be the the language code (ie. "nor") or
 the language (ie. "Norwegian"). If a subtitle matching that language can't be
-found, it will still rip the disc, but will omit the subtitle.
+found, it will still rip the disc, but will omit the subtitle. You can rip
+multiple languages by separating them by commas.
 
 =item B<--no-eject>
 
