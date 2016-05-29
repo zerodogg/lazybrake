@@ -98,6 +98,16 @@ I<--min-duration> when scanning, but ignores I<--max-duration>.
 If lazybrake fails to detect the movie title, you will need to provide the title
 manually. You should still supply I<--movie> to enable movie mode when you do.
 
+=item B<--audiolang=Str>
+
+Select the language of the audio track(s) to rip. If you do not provide an
+--audiolang then the default language for the disc will be used. I<Str> can be
+the language code (ie. "eng") or the language (ie. "English").  You can rip
+multiple languages by separating them with commas. If an audio track matching
+that language can't be found, it will still rip the disc, but will either 1)
+omit that language but rip other languages provided, or 2) rip
+the default language track.
+
 =item B<--subtitle=Str>
 
 Select a subtitle to rip. I<Str> can be the the language code (ie. "nor") or
