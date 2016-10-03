@@ -98,6 +98,20 @@ I<--min-duration> when scanning, but ignores I<--max-duration>.
 If lazybrake fails to detect the movie title, you will need to provide the title
 manually. You should still supply I<--movie> to enable movie mode when you do.
 
+=item B<--two-pass>
+
+Enables two-pass encoding. This is slower than single-pass, but can increase
+the quality of video files without sacrificing filesize. The default is
+single-pass encoding.
+
+=item B<--pass-opts=Str>
+
+This allows you to pass command-line parameters directly to HandBrakeCLI. Use
+with care, as lazybrake will not validate the parameters supplied. The string
+gets passed as-is to HandBrakeCLI, as a single parameter (meaning you will need
+to use --opt=val if the option you're supplying also requires a parameter). You
+may only provide a single --pass-opts.
+
 =item B<--audiolang=Str>
 
 Select the language of the audio track(s) to rip. If you do not provide an
