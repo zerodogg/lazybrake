@@ -38,6 +38,7 @@ class LazyBrake
     has Str  $.audiolang;
     has Str  $.name;
     has Str  $.device;
+    has Str  $.pass-opts;
     has Bool $.scan;
     has Bool $.eject   = True;
     has Bool $.dry-run = False;
@@ -699,6 +700,10 @@ class LazyBrake
             {
                 @command.append: '--two-pass';
             }
+            if $.pass-opts
+            {
+                @command.append: $.pass-opts;
+            }
             if !$.dry-run
             {
                 if $jobTotal > 1
@@ -975,6 +980,7 @@ sub MAIN (
     Bool :$no-eject    = False,
     Bool :$no-dvdnav   = False,
     Bool :$two-pass    = False,
+    Str  :$pass-opts,
     Str :$subtitle,
     Str :$audiolang,
     *@title)
@@ -1042,6 +1048,7 @@ sub MAIN (
         :$movie,
         :$verbosity,
         :$two-pass,
+        :$pass-opts,
         try-dvdnav => !$no-dvdnav,
     );
     # Output scan info if --scan was supplied
@@ -1082,6 +1089,7 @@ sub USAGE ()
     printHelp('' , '--min-duration=Int' , 'Set the minimum duration of a track to rip in seconds (when in TV mode), default is 900.');
     printHelp('' , '--two-pass'         , 'Enable two-pass encoding (default: disabled)');
     printHelp('' , '--name=Str'         , 'Set the name prefix for files.');
+    printHelp('' , '--pass-opts=Str'    , 'Pass an option directly to HandBrakeCLI. See the manpage for details.');
     printHelp('' , '--tv'               , 'Enable TV mode, rips several titles from a disc (ie. episodes) - the default.');
     printHelp('' , '--movie'            , 'Enable movie mode, rips only the main title from a disc (ie. the movie itself).');
     printHelp('' , '--dry-run'          , 'Don\'t actually rip anything, just output the messages.');
