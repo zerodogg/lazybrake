@@ -962,6 +962,13 @@ sub printHelp (Str $short is copy, Str $long is copy, Str $desc)
     return True;
 }
 
+#| Output version information
+sub version ()
+{
+    say 'lazybrake version '~$version;
+    exit;
+}
+
 #| Command-line parsing
 sub MAIN (
     Str :$device  is copy,
@@ -969,6 +976,7 @@ sub MAIN (
     Int :$min-duration = 900,
     Int :$disc-no is copy = 1,
     Str :$name         = '',
+    Bool :$version     = False,
     Bool :$scan        = False,
     Bool :$tv     is copy = False,
     Bool :$movie  is copy = False,
@@ -985,6 +993,10 @@ sub MAIN (
     Str :$audiolang,
     *@title)
 {
+    if $version
+    {
+        version();
+    }
     my Int $verbosity = 0;
     my Bool $eject = !$no-eject;
     # Handle --device being missing
