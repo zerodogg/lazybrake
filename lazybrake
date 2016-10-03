@@ -45,6 +45,7 @@ class LazyBrake
     has Bool $.movie;
     has Bool $.tv;
     has Bool $!looping = False;
+    has Bool $.two-pass = False;
 
     #| Returns metadata about an mp4 file using 'mp4info'
     method MP4Info (Str $file) returns Hash
@@ -694,6 +695,10 @@ class LazyBrake
             }
             my @command = self!HDBCommand('-v0', '-t', $title, '-o', $filename,'--preset',$preset);
             @command.append: self.buildAudioSubParams(:%metadata,:$title);
+            if $.two-pass
+            {
+                @command.append: '--two-pass';
+            }
             if !$.dry-run
             {
                 if $jobTotal > 1
@@ -969,6 +974,7 @@ sub MAIN (
     Bool :$full-debug  = False,
     Bool :$no-eject    = False,
     Bool :$no-dvdnav   = False,
+    Bool :$two-pass    = False,
     Str :$subtitle,
     Str :$audiolang,
     *@title)
@@ -1035,6 +1041,7 @@ sub MAIN (
         :$scan,
         :$movie,
         :$verbosity,
+        :$two-pass,
         try-dvdnav => !$no-dvdnav,
     );
     # Output scan info if --scan was supplied
@@ -1073,6 +1080,7 @@ sub USAGE ()
     printHelp('' , '--device=Str'       , 'Override the path to the DVD-Rom device.');
     printHelp('' , '--max-duration=Int' , 'Set the max duration of a track to rip in seconds (when in TV mode), default is 3600.');
     printHelp('' , '--min-duration=Int' , 'Set the minimum duration of a track to rip in seconds (when in TV mode), default is 900.');
+    printHelp('' , '--two-pass'         , 'Enable two-pass encoding (default: disabled)');
     printHelp('' , '--name=Str'         , 'Set the name prefix for files.');
     printHelp('' , '--tv'               , 'Enable TV mode, rips several titles from a disc (ie. episodes) - the default.');
     printHelp('' , '--movie'            , 'Enable movie mode, rips only the main title from a disc (ie. the movie itself).');
