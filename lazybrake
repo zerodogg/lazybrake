@@ -69,7 +69,11 @@ class lazyBase
         $*ERR.print($reason~"\n");
         exit $retVal;
     }
+}
 
+#| Base class for backends
+class lazyBackend is lazyBase
+{
     #| Returns metadata about an mp4 file using 'mp4info'
     method MP4Info (Str $file) returns Hash
     {
@@ -100,7 +104,11 @@ class lazyBase
             return False;
         }
 
-        my %fileMeta           = self.MP4Info($file);
+        my %fileMeta;
+        if $.extension eq 'mp4'
+        {
+            %fileMeta = self.MP4Info($file);
+        }
 
         if %fileMeta<video>:exists
         {
@@ -157,10 +165,34 @@ class lazyBase
 
     }
 
+    #| Run a foreground process
+    method runForgeroundProcess (@command)
+    {
+        self.printd: "Running: "~@command.join(' ');
+        try
+        {
+            CATCH
+            {
+                default
+                {
+                    return False;
+                }
+            }
+            if $.verbosity >= 199
+            {
+                my $cmd = run @command;
+            }
+            else
+            {
+                my $cmd = run @command, :err("/dev/null".IO.open);
+            }
+        }
+        return True;
+    }
 }
 
 #| Backend: HandBrakeCLI
-class backend_HDB is lazyBase
+class backend_HDB is lazyBackend
 {
     has Str $.extension = 'mp4';
 
@@ -401,26 +433,11 @@ class backend_HDB is lazyBase
         {
             @command.push('--no-dvdnav');
         }
-        self.printd: "Running: "~@command.join(' ');
-        try
+        if self.runForgeroundProcess(@command) == False
         {
-            CATCH
-            {
-                default
-                {
-                    return {
-                        success => False,
-                    };
-                }
-            }
-            if $.verbosity >= 199
-            {
-                my $cmd = run @command;
-            }
-            else
-            {
-                my $cmd = run @command, :err("/dev/null".IO.open);
-            }
+            return {
+                success => False
+            };
         }
         if !$no-dvdnav && (!$filename.IO.e || !self.validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>))
         {
@@ -776,7 +793,7 @@ class LazyBrake is lazyBase
             print "Validating files...";
             for @ripped -> %processed
             {
-                if ! self.validateFile(
+                if ! self.backend().validateFile(
                     file          => %processed<filename>,
                     largestRipped => $largestRipped,
                     duration      => %processed<duration>
@@ -806,7 +823,7 @@ class LazyBrake is lazyBase
                         no-dvdnav => True,
                     );
 
-                    if ! self.validateFile(
+                    if ! self.backend().validateFile(
                         file          => $filename,
                         largestRipped => $largestRipped,
                         duration      => %scanData<titles>.{$title}.<duration>.<totalInSeconds>
@@ -848,7 +865,7 @@ class LazyBrake is lazyBase
             if $filename.IO.e
             {
                 print "$filename: already exists (title $title)";
-                if self.validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>)
+                if self.backend().validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>)
                 {
                     say ", skipping this title";
                     return $filename;
@@ -896,7 +913,7 @@ class LazyBrake is lazyBase
                     say "An error occurred during ripping, will retry [attempt $i/5].";
                     next;
                 }
-                if !self.validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>) && $tmpStorageName && $tmpStorageName.IO.s > $filename.IO.s
+                if !self.backend().validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>) && $tmpStorageName && $tmpStorageName.IO.s > $filename.IO.s
                 {
                     $filename.IO.unlink;
                     $tmpStorageName.IO.rename($filename);
