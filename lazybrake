@@ -28,25 +28,47 @@ use v6;
 
 my Real $version = 0.1;
 
-#| Class that handles all of the actual ripping etc.
-class LazyBrake
+#|{ Base class for all of our other classes
+  Provides all of our helpers (like printv/printd) as well as class variables
+  and other methods (ie. validateFile()) that all subclasses need}
+class lazyBase
 {
     has Int  $.verbosity = 0;
     has Int  $.min-duration = 900;
     has Int  $.max-duration;
-    has Str  $.subtitle;
-    has Str  $.audiolang;
-    has Str  $.name;
-    has Str  $.device;
-    has Str  $.pass-opts;
-    has Bool $.scan;
-    has Bool $.eject   = True;
-    has Bool $.dry-run = False;
     has Bool $.try-dvdnav = True;
-    has Bool $.movie;
-    has Bool $.tv;
-    has Bool $!looping = False;
-    has Bool $.two-pass = False;
+    has Str  $.device;
+    has Bool $.no-dvdnav   = False;
+    has Bool $.two-pass    = False;
+    has Str $.subtitle;
+    has Str $.audiolang;
+    has Str  $.pass-opts;
+
+    #| Output debugging text
+    method printd(Str $message)
+    {
+        self.printv($message,99);
+    }
+
+    #| Output verbose text
+    method printv(Str $message, Int $level = 1)
+    {
+        if $.verbosity >= $level
+        {
+            if $level == 99
+            {
+                print "Debug: ";
+            }
+            print $message~"\n";
+        }
+    }
+
+    #| Error out
+    method errOut(Str $reason, Int $retVal = 1)
+    {
+        $*ERR.print($reason~"\n");
+        exit $retVal;
+    }
 
     #| Returns metadata about an mp4 file using 'mp4info'
     method MP4Info (Str $file) returns Hash
@@ -70,11 +92,11 @@ class LazyBrake
     }
 
     #| Validate that a file was properly ripped by looking at the file size and video length
-    method !validateFile (Str :$file!, Rat :$largestRipped = 0.0, Int :$duration!) returns Bool
+    method validateFile (Str :$file!, Rat :$largestRipped = 0.0, Int :$duration!) returns Bool
     {
         if ! $file.IO.e
         {
-            self!printv: "$file: failed validation due to non-existant file";
+            self.printv: "$file: failed validation due to non-existant file";
             return False;
         }
 
@@ -90,8 +112,8 @@ class LazyBrake
             }
             else
             {
-                self!printv: "$file: failed due to video track length validation";
-                self!printd: "mp4info reported the video track to be "~%fileMeta<video>~" seconds. This was compared to max[$maxDuration] and min[$minDuration]";
+                self.printv: "$file: failed due to video track length validation";
+                self.printd: "mp4info reported the video track to be "~%fileMeta<video>~" seconds. This was compared to max[$maxDuration] and min[$minDuration]";
                 return False;
             }
         }
@@ -109,7 +131,7 @@ class LazyBrake
 
         if $file.IO.s < $minSizeBytes
         {
-            self!printd: "$file: is smaller than the minimum file size expected for this file ($minSizeBytes bytes)";
+            self.printd: "$file: is smaller than the minimum file size expected for this file ($minSizeBytes bytes)";
             return False;
         }
 
@@ -128,30 +150,19 @@ class LazyBrake
         }
         else
         {
-            self!printv: "$file: failed due to bytesPerSecond comparison";
-            self!printd: "bytesPerSecond[$bytesPerSecond] < largestRipped[$largestRipped]";
+            self.printv: "$file: failed due to bytesPerSecond comparison";
+            self.printd: "bytesPerSecond[$bytesPerSecond] < largestRipped[$largestRipped]";
             return False;
         }
 
     }
 
-    #| Check if we are in tv or movie mode
-    method !isMode(Str $checkType) returns Bool
-    {
-        if $.movie && $.tv
-        {
-            self.errOut('Both movie and tv is True. LazyBrake-class construction error');
-        }
-        if $checkType eq 'tv' && $.tv
-        {
-            return True;
-        }
-        elsif $checkType eq 'movie' && $.movie
-        {
-            return True;
-        }
-        return False;
-    }
+}
+
+#| Backend: HandBrakeCLI
+class backend_HDB is lazyBase
+{
+    has Str $.extension = 'mp4';
 
     #| Retrieve the HandBrakeCLI command-line, with basic parameters preconfigured
     method !HDBCommand (*@args) returns Array
@@ -169,7 +180,7 @@ class LazyBrake
     method parseHDBScan (*@cmd) returns Hash
     {
         my $null = '/dev/null'.IO.open;
-        self!printd: "Running: "~@cmd.join(' ');
+        self.printd: "Running: "~@cmd.join(' ');
         my $in = run @cmd, :err, :out($null);
         my $currentTitle = -1;
         my $currentSubtype;
@@ -187,7 +198,7 @@ class LazyBrake
                 if $entry ~~ s/:s^\+ title (\d+)\:/$0/
                 {
                     $entry = $entry.Int;
-                    self!printd: "Found title $entry";
+                    self.printd: "Found title $entry";
                     $currentSubtype = Nil;
                     $currentTitle   = $entry;
                     %data{'titleOrder'}.push($entry);
@@ -255,7 +266,7 @@ class LazyBrake
     }
 
     #| Performs a scan with HandBrakeCLI --scan and returns its data in a hash
-    method performHDBScan () returns Hash
+    method scan () returns Hash
     {
         my %result;
         my $success = False;
@@ -283,7 +294,7 @@ class LazyBrake
         if %result<titleOrder>.elems <= 1
         {
             say "questionable result - trying without dvdnav";
-            self!printd: "Only got "~%result<titleOrder>.elems~" titles, not trusting the result, will retry without libdvdnav";
+            self.printd: "Only got "~%result<titleOrder>.elems~" titles, not trusting the result, will retry without libdvdnav";
             $success = False;
         }
 
@@ -294,6 +305,230 @@ class LazyBrake
             %result = self.parseHDBScan: @cmd;
         }
         return %result;
+    }
+
+    #| Get an array of audio/subtitle params for HandBrakeCLI
+    method buildAudioSubParams(:%metadata!, :$title!)
+    {
+        my @params;
+        my $type;
+
+        for <subtitles audio> -> $type
+        {
+            my @final;
+            my $entries;
+            my $dataType;
+            if ($type eq 'subtitles')
+            {
+                $entries = $.subtitle;
+                $dataType = 'subtitles';
+            }
+            elsif ($type eq 'audio')
+            {
+                $entries = $.audiolang;
+                $dataType = 'audio';
+            }
+            else
+            {
+                die;
+            }
+
+            if (!$entries)
+            {
+                next;
+            }
+
+            for $entries.split(',') -> $entries
+            {
+                my $origTitle = $entries;
+                if $entries && %metadata{$dataType} && !%metadata.{$dataType}.{$entries}
+                {
+                    for %metadata{$dataType}.keys -> $subkey
+                    {
+                        if %metadata{$dataType}.{$subkey} && (%metadata{$dataType}.{$subkey}.<name>:exists) && %metadata{$dataType}.{$subkey}.<name> eq $entries
+                        {
+                            self.printv: "Remapped $entries to $subkey";
+                            last;
+                        }
+                    }
+                }
+                if $entries && %metadata{$dataType}.{$entries}
+                {
+                    @final.push(%metadata{$dataType}.{$entries}.<id>);
+                }
+                else
+                {
+                    if ($dataType eq 'subtitles')
+                    {
+                        say "Title $title has no subtitle \"$origTitle\": skipping this subtitle";
+                    }
+                    elsif ($dataType eq 'audio')
+                    {
+                        say "Title $title has no audio language \"$origTitle\": skipping this language";
+                    }
+                }
+            }
+            if @final.elems > 0
+            {
+                if ($dataType eq 'subtitles')
+                {
+                    @params.push('--subtitle',@final.join(','));
+                }
+                elsif ($dataType eq 'audio')
+                {
+                    @params.push('--audio',@final.join(','));
+                }
+            }
+        }
+
+        return @params;
+    }
+
+    #| Rips a single title using the settings provided
+    method ripSingleTitle(Int :$title!, :$filename!, :%metadata!, :$preset = 'Normal', Bool :$no-dvdnav is copy = False) returns Hash
+    {
+        my @command = self!HDBCommand('-v0', '-t', $title, '-o', $filename,'--preset',$preset);
+        @command.append: self.buildAudioSubParams(:%metadata,:$title);
+        if $.two-pass
+        {
+            @command.append: '--two-pass';
+        }
+        if $.pass-opts
+        {
+            @command.append: $.pass-opts;
+        }
+        if $no-dvdnav && $.try-dvdnav
+        {
+            @command.push('--no-dvdnav');
+        }
+        self.printd: "Running: "~@command.join(' ');
+        try
+        {
+            CATCH
+            {
+                default
+                {
+                    return {
+                        success => False,
+                    };
+                }
+            }
+            if $.verbosity >= 199
+            {
+                my $cmd = run @command;
+            }
+            else
+            {
+                my $cmd = run @command, :err("/dev/null".IO.open);
+            }
+        }
+        if !$no-dvdnav && (!$filename.IO.e || !self.validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>))
+        {
+            if !$.try-dvdnav
+            {
+                say "(error, trying to re-rip)";
+            }
+            else
+            {
+                say "(error, trying to re-rip without using dvdnav)";
+                @command.push('--no-dvdnav');
+            }
+            sleep(2);
+            my $tmpStorageName = $filename~'-lazybrake.validation.backup~';
+            if $filename.IO.e
+            {
+                $filename.IO.rename($tmpStorageName);
+            }
+            else
+            {
+                $tmpStorageName = Nil;
+            }
+            self.printd: "Running: "~@command.join(' ');
+            try
+            {
+                CATCH
+                {
+                    return {
+                        success => False,
+                    };
+                }
+                if $.verbosity >= 199
+                {
+                    my $cmd = run @command;
+                }
+                else
+                {
+                    my $cmd = run @command, :err("/dev/null".IO.open);
+                }
+            }
+            return {
+                success => True,
+                tmpName => $tmpStorageName
+            }
+        }
+        return {
+            success => True
+        };
+    }
+}
+
+#| Class that handles all of the actual ripping etc.
+class LazyBrake is lazyBase
+{
+    has Str  $.subtitle;
+    has Str  $.audiolang;
+    has Str  $.name;
+    has Bool $.scan;
+    has Bool $.eject   = True;
+    has Bool $.dry-run = False;
+    has Bool $.movie;
+    has Bool $.tv;
+    has Bool $!looping = False;
+
+    #| Returns our current backend object
+    method backend ()
+    {
+        state $backend;
+        if !$backend
+        {
+            $backend = backend_HDB.new(
+                :$.try-dvdnav,
+                :$.min-duration,
+                :$.max-duration,
+                :$.device,
+                :$.verbosity,
+                :$.no-dvdnav,
+                :$.two-pass,
+                :$.subtitle,
+                :$.audiolang,
+                :$.pass-opts,
+            );
+        }
+        return $backend;
+    }
+
+    #| Thin wrapper around the backend scan()
+    method scan ()
+    {
+        return self.backend().scan();
+    }
+
+    #| Check if we are in tv or movie mode
+    method !isMode(Str $checkType) returns Bool
+    {
+        if $.movie && $.tv
+        {
+            self.errOut('Both movie and tv is True. LazyBrake-class construction error');
+        }
+        if $checkType eq 'tv' && $.tv
+        {
+            return True;
+        }
+        elsif $checkType eq 'movie' && $.movie
+        {
+            return True;
+        }
+        return False;
     }
 
     #| Parses isoinfo, to get metadata about a disc
@@ -323,7 +558,7 @@ class LazyBrake
         print "Scanning disc...";
         my ($volume_id,$volume_size) = self.parseISOInfo();
         print ".";
-        my %scanData = self.performHDBScan();
+        my %scanData = self.scan();
         print "done\n";
         if %scanData<titleOrder>.elems == 0
         {
@@ -341,7 +576,7 @@ class LazyBrake
                     }
                     else
                     {
-                        self!printv: "Skipping title $title because it is too long ("~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~" seconds ["~%scanData<titles>.{$title}.<duration>.<hours>~":"~%scanData<titles>.{$title}.<duration>.<minutes>~":"~%scanData<titles>.{$title}.<duration>.<seconds>~")";
+                        self.printv: "Skipping title $title because it is too long ("~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~" seconds ["~%scanData<titles>.{$title}.<duration>.<hours>~":"~%scanData<titles>.{$title}.<duration>.<minutes>~":"~%scanData<titles>.{$title}.<duration>.<seconds>~")";
                     }
                 }
             }
@@ -391,12 +626,12 @@ class LazyBrake
                         my $longestLen70 = %scanData<titles>.{$longest}.<duration>.<totalInSeconds> * 0.70;
                         if $longestLen70 >= %scanData<titles>.{$nextLongest}.<duration>.<totalInSeconds>
                         {
-                            self!printd: "Fallback detection of title found title '$longest'";
+                            self.printd: "Fallback detection of title found title '$longest'";
                             @titles.push($longest);
                         }
                         else
                         {
-                            self!printd: "The detected longest title ($longest, $longestLen70 seconds) was not 30% longer than the next longest track. Fallback detection failed.";
+                            self.printd: "The detected longest title ($longest, $longestLen70 seconds) was not 30% longer than the next longest track. Fallback detection failed.";
                             # TODO: Loop over all titles here, if they're all
                             # of the same length, then stupid DRM is in effect
                             # and we can inform the user about it.
@@ -450,7 +685,7 @@ class LazyBrake
     method outputScanData (:$min-duration)
     {
         print "Scanning disc...";
-        my %scanData = self.performHDBScan();
+        my %scanData = self.scan();
         my ($volume_id,$volume_size) = self.parseISOInfo();
         print "done\n";
         say "Disc reports its name as $volume_id";
@@ -479,8 +714,12 @@ class LazyBrake
     }
 
     #| Construct a file name
-    method buildFileName (Int :$title!, :$volume_id!, :$volume_size!, Str :$extension = 'mp4', Str :$name!) returns Str
+    method buildFileName (Int :$title!, :$volume_id!, :$volume_size!, Str :$extension is copy, Str :$name!) returns Str
     {
+        if !$extension
+        {
+            $extension = self.backend().extension;
+        }
         my $finalName;
         if $name.defined && $name.chars > 0
         {
@@ -537,13 +776,13 @@ class LazyBrake
             print "Validating files...";
             for @ripped -> %processed
             {
-                if ! self!validateFile(
+                if ! self.validateFile(
                     file          => %processed<filename>,
                     largestRipped => $largestRipped,
                     duration      => %processed<duration>
                 )
                 {
-                    self!printv: %processed<filename>~" failed validation, queuing for re-rip";
+                    self.printv: %processed<filename>~" failed validation, queuing for re-rip";
                     @titles.push(%processed);
                 }
             }
@@ -567,7 +806,7 @@ class LazyBrake
                         no-dvdnav => True,
                     );
 
-                    if ! self!validateFile(
+                    if ! self.validateFile(
                         file          => $filename,
                         largestRipped => $largestRipped,
                         duration      => %scanData<titles>.{$title}.<duration>.<totalInSeconds>
@@ -593,85 +832,8 @@ class LazyBrake
         return True;
     }
 
-    #| Get an array of audio/subtitle params for HandBrakeCLI
-    method buildAudioSubParams(:%metadata!, :$title!)
-    {
-        my @params;
-        my $type;
-
-        for <subtitles audio> -> $type
-        {
-            my @final;
-            my $entries;
-            my $dataType;
-            if ($type eq 'subtitles')
-            {
-                $entries = $.subtitle;
-                $dataType = 'subtitles';
-            }
-            elsif ($type eq 'audio')
-            {
-                $entries = $.audiolang;
-                $dataType = 'audio';
-            }
-            else
-            {
-                die;
-            }
-
-            if (!$entries)
-            {
-                next;
-            }
-
-            for $entries.split(',') -> $entries
-            {
-                my $origTitle = $entries;
-                if $entries && %metadata{$dataType} && !%metadata.{$dataType}.{$entries}
-                {
-                    for %metadata{$dataType}.keys -> $subkey
-                    {
-                        if %metadata{$dataType}.{$subkey} && (%metadata{$dataType}.{$subkey}.<name>:exists) && %metadata{$dataType}.{$subkey}.<name> eq $entries
-                        {
-                            self!printv: "Remapped $entries to $subkey";
-                            last;
-                        }
-                    }
-                }
-                if $entries && %metadata{$dataType}.{$entries}
-                {
-                    @final.push(%metadata{$dataType}.{$entries}.<id>);
-                }
-                else
-                {
-                    if ($dataType eq 'subtitles')
-                    {
-                        say "Title $title has no subtitle \"$origTitle\": skipping this subtitle";
-                    }
-                    elsif ($dataType eq 'audio')
-                    {
-                        say "Title $title has no audio language \"$origTitle\": skipping this language";
-                    }
-                }
-            }
-            if @final.elems > 0
-            {
-                if ($dataType eq 'subtitles')
-                {
-                    @params.push('--subtitle',@final.join(','));
-                }
-                elsif ($dataType eq 'audio')
-                {
-                    @params.push('--audio',@final.join(','));
-                }
-            }
-        }
-
-        return @params;
-    }
-
     #| Rip a single title
-    method ripTitle(Int :$title!, :$name!, :$volume_id!, :$volume_size!, :%metadata!, :$jobNo!, :$jobTotal!, :$preset = 'Normal', Bool :$no-dvdnav is copy = False) returns Str
+    method ripTitle(Int :$title!, :$name!, :$volume_id!, :$volume_size!, :%metadata!, :$jobNo!, :$jobTotal!, :$preset = 'Normal', Bool :$no-dvdnav) returns Str
     {
         my $i = 0;
         loop
@@ -686,7 +848,7 @@ class LazyBrake
             if $filename.IO.e
             {
                 print "$filename: already exists (title $title)";
-                if self!validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>)
+                if self.validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>)
                 {
                     say ", skipping this title";
                     return $filename;
@@ -694,127 +856,54 @@ class LazyBrake
                 say ", but it failed validation. Re-ripping.";
                 $filename.IO.unlink;
             }
-            my @command = self!HDBCommand('-v0', '-t', $title, '-o', $filename,'--preset',$preset);
-            @command.append: self.buildAudioSubParams(:%metadata,:$title);
-            if $.two-pass
-            {
-                @command.append: '--two-pass';
-            }
-            if $.pass-opts
-            {
-                @command.append: $.pass-opts;
-            }
             if !$.dry-run
             {
                 if $jobTotal > 1
                 {
                     print '['~(sprintf "%02d",$jobNo)~'/'~(sprintf "%02d",$jobTotal)~'] ';
                 }
-                if $no-dvdnav && $.try-dvdnav
-                {
-                    @command.push('--no-dvdnav');
-                }
                 say "Ripping title $title to $filename:";
-                self!printd: "Running: "~@command.join(' ');
-                try
+                my %response = self.backend().ripSingleTitle(
+                    :$title,
+                    :$filename,
+                    :%metadata,
+                    :$preset,
+                    :$no-dvdnav,
+                );
+                if ! %response<success>
                 {
-                    CATCH
+                    if $i >= 5
                     {
-                        default
-                        {
-                            if $i >= 5
-                            {
-                                say "HandBrakeCLI returned an error. Aborting";
-                                say "This could be due to a bug in HandBrakeCLI or a bad disc.";
-                                say "If you tried to rip subtitles you may wish to try without them.";
-                                say "If you want more details, run lazybrake with --full-debug";
-                            }
-                            else
-                            {
-                                say "HandBrakeCLI returned an error, will retry [attempt $i/5].";
-                            }
-                            next;
-                        }
-                    }
-                    if $.verbosity >= 199
-                    {
-                        my $cmd = run @command;
+                        say "HandBrakeCLI returned an error. Aborting";
+                        say "This could be due to a bug in HandBrakeCLI or a bad disc.";
+                        say "If you tried to rip subtitles you may wish to try without them.";
+                        say "If you want more details, run lazybrake with --full-debug";
                     }
                     else
                     {
-                        my $cmd = run @command, :err("/dev/null".IO.open);
+                        say "HandBrakeCLI returned an error, will retry [attempt $i/5].";
                     }
+                    next;
                 }
-                if !$no-dvdnav && (!$filename.IO.e || !self!validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>))
+                my $tmpStorageName = %response<tmpName>;
+                if !$filename.IO.e
                 {
-                    if !$.try-dvdnav
+                    if $i >= 5
                     {
-                        say "(error, trying to re-rip)";
+                        say "Fatal error during ripping. Target file does not exist. Aborting.";
+                        exit 13;
                     }
-                    else
-                    {
-                        say "(error, trying to re-rip without using dvdnav)";
-                        @command.push('--no-dvdnav');
-                    }
-                    sleep(2);
-                    my $tmpStorageName = $filename~'-lazybrake.validation.backup~';
-                    if $filename.IO.e
-                    {
-                        $filename.IO.rename($tmpStorageName);
-                    }
-                    else
-                    {
-                        $tmpStorageName = Nil;
-                    }
-                    self!printd: "Running: "~@command.join(' ');
-                    try
-                    {
-                        CATCH
-                        {
-                            default
-                            {
-                                if $i >= 5
-                                {
-                                    say "HandBrakeCLI returned an error. Aborting";
-                                    say "This could be due to a bug in HandBrakeCLI or a bad disc.";
-                                    say "If you tried to rip subtitles you may wish to try without them.";
-                                    say "If you want more details, run lazybrake with --full-debug";
-                                }
-                                else
-                                {
-                                    say "HandBrakeCLI returned an error, will retry [attempt $i/5].";
-                                }
-                                next;
-                            }
-                        }
-                        if $.verbosity >= 199
-                        {
-                            my $cmd = run @command;
-                        }
-                        else
-                        {
-                            my $cmd = run @command, :err("/dev/null".IO.open);
-                        }
-                    }
-                    if !$filename.IO.e
-                    {
-                        if $i >= 5
-                        {
-                            say "Fatal error during ripping. Target file does not exist. Aborting.";
-                            exit 13;
-                        }
-                        say "An error occurred during ripping, will retry [attempt $i/5].";
-                        next;
-                    }
-                    if !self!validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>) && $tmpStorageName && $tmpStorageName.IO.s > $filename.IO.s
-                    {
-                        $filename.IO.unlink;
-                        $tmpStorageName.IO.rename($filename);
-                    }
-                    elsif $tmpStorageName
-                    {
-                        $tmpStorageName.IO.unlink;
-                    }
+                    say "An error occurred during ripping, will retry [attempt $i/5].";
+                    next;
+                }
+                if !self.validateFile(file => $filename, duration => %metadata<duration>.<totalInSeconds>) && $tmpStorageName && $tmpStorageName.IO.s > $filename.IO.s
+                {
+                    $filename.IO.unlink;
+                    $tmpStorageName.IO.rename($filename);
+                }
+                elsif $tmpStorageName
+                {
+                    $tmpStorageName.IO.unlink;
                 }
             }
             else
@@ -837,32 +926,6 @@ class LazyBrake
             }
         }
         return False;
-    }
-
-    #| Output verbose text
-    method !printv(Str $message, Int $level = 1)
-    {
-        if $.verbosity >= $level
-        {
-            if $level == 99
-            {
-                print "Debug: ";
-            }
-            print $message~"\n";
-        }
-    }
-
-    #| Output debugging text
-    method !printd(Str $message)
-    {
-        self!printv($message,99);
-    }
-
-    #| Error out
-    method errOut(Str $reason, Int $retVal = 1)
-    {
-        $*ERR.print($reason~"\n");
-        exit $retVal;
     }
 
     #| Do a rip loop
