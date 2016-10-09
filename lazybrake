@@ -530,10 +530,13 @@ class LazyBrake is lazyBase
     has Str  $.audiolang;
     has Str  $.name;
     has Bool $.scan;
-    has Bool $.eject   = True;
+    has Bool $.permitEject = True;
     has Bool $.dry-run = False;
     has Bool $.movie;
     has Bool $.tv;
+    has Str  @.errorDiscs is rw;
+    has Int  $.discsAttempted is rw = 0;
+    has Int  $.ripSuccess is rw = 0;
     has Str  $.useBackend = 'handbrake';
 
     #| Returns our current backend object
@@ -591,6 +594,17 @@ class LazyBrake is lazyBase
         }
     }
 
+    #| Outputs our summary
+    method summary ()
+    {
+        say "\r   \r\nSummary:";
+        say "Ripped "~$.ripSuccess~" of "~$.discsAttempted~" discs";
+        if @.errorDiscs
+        {
+            say "The following discs failed: "~@.errorDiscs.join(', ');
+        }
+    }
+
     #| Check if we are in tv or movie mode
     method !isMode(Str $checkType) returns Bool
     {
@@ -634,6 +648,7 @@ class LazyBrake is lazyBase
     method handleDisc (:$name = $.name, *@titles)
     {
         print "Scanning disc...";
+        $.discsAttempted++;
         my ($volume_id,$volume_size) = self.parseISOInfo();
         print ".";
         my %scanData = self.scan();
@@ -739,22 +754,15 @@ class LazyBrake is lazyBase
         {
             self.errOut: "Found no titles on this disc. Try changing --min-duration and --max-duration", canRecover => True;
         }
-        self.ripTitles(
+        if (self.ripTitles(
             :$name,
             :%scanData,
             :$volume_id,
             :$volume_size,
             :@titles
-        )
+        ))
         {
-            if $.dry-run && !$!looping
-            {
-                say "Would have ejected the disc if not for --dry-run"
-            }
-            else
-            {
-                run 'eject', $.device;
-            }
+            $.ripSuccess++;
         }
         self.eject();
     }
@@ -1009,10 +1017,11 @@ class LazyBrake is lazyBase
     #| Do a rip loop
     method ripLoop (Int :$disc-no! is rw, *@titles)
     {
-        $!looping = True;
+        $.looping = True;
 
         # Handle SIGINT gracefully, as it is our primary exit method when looping
         signal(SIGINT).tap({
+            self.summary();
             exit 0;
         });
         # Output a waiting message if there's no disk in the drive when we enter the loop
