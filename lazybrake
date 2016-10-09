@@ -77,6 +77,19 @@ class lazyBase
         }
         exit $retVal;
     }
+
+    #| Checks if a command is in our PATH
+    method inPath ($command)
+    {
+        for %*ENV<PATH>.split(':') -> $path
+        {
+            if ($path~'/'~$command).IO.x
+            {
+                return True;
+            }
+        }
+        return False;
+    }
 }
 
 #| Base class for backends
@@ -494,6 +507,12 @@ class backend_HDB is lazyBackend
             success => True
         };
     }
+
+    #| Checks if this backend is usable
+    method usable () returns Bool
+    {
+        return self.inPath('HandBrakeCLI')
+    }
 }
 
 #|{ Backend: makemkvcon
@@ -521,6 +540,12 @@ class backend_mmkv is backend_HDB
             success => True
         };
     }
+
+    #| Checks if this backend is usable
+    method usable () returns Bool
+    {
+        return self.inPath('makemkvcon');
+    }
 }
 
 #| Class that handles all of the actual ripping etc.
@@ -537,7 +562,7 @@ class LazyBrake is lazyBase
     has Str  @.errorDiscs is rw;
     has Int  $.discsAttempted is rw = 0;
     has Int  $.ripSuccess is rw = 0;
-    has Str  $.useBackend = 'handbrake';
+    has Str  $.useBackend = 'DEFAULT';
 
     #| Returns our current backend object
     method backend ()
@@ -545,28 +570,49 @@ class LazyBrake is lazyBase
         state $backend;
         if !$backend
         {
-            my $backendClass;
+            my %attempted;
+            my @backends = ( backend_HDB, backend_mmkv );
             if $.useBackend eq 'makemkv'
             {
-                $backendClass = backend_mmkv;
+                @backends = (backend_mmkv);
             }
-            else
+            elsif $.useBackend eq 'handbrake'
             {
-                $backendClass = backend_HDB;
+                @backends = (backend_HDB);
             }
-            $backend = $backendClass.new(
-                :$.try-dvdnav,
-                :$.min-duration,
-                :$.max-duration,
-                :$.device,
-                :$.verbosity,
-                :$.no-dvdnav,
-                :$.two-pass,
-                :$.subtitle,
-                :$.audiolang,
-                :$.pass-opts,
-            );
-            self.printd: 'Instantiated backend: '~$backend.^name;
+            for @backends -> $backendClass
+            {
+                if !%attempted{$backend.^name}
+                {
+                    %attempted{$backend.^name} = True;
+                    $backend = $backendClass.new(
+                        :$.try-dvdnav,
+                        :$.min-duration,
+                        :$.max-duration,
+                        :$.device,
+                        :$.verbosity,
+                        :$.no-dvdnav,
+                        :$.two-pass,
+                        :$.subtitle,
+                        :$.audiolang,
+                        :$.pass-opts,
+                    );
+                    if $backend.usable()
+                    {
+                        self.printd: 'Instantiated backend: '~$backend.^name;
+                        return $backend;
+                    }
+                    else
+                    {
+                        self.printd: 'Backend '~$backend.^name~' is not usable';
+                        $backend = Nil;
+                    }
+                }
+            }
+            if !$backend
+            {
+                self.errOut('Was unable to find any usable backend. Install HandBrakeCLI to use lazybrake.');
+            }
         }
         return $backend;
     }
