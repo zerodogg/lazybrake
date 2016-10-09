@@ -43,6 +43,7 @@ class lazyBase
     has Str  $.device;
     has Bool $.no-dvdnav   = False;
     has Bool $.two-pass    = False;
+    has Bool $.looping is rw = False;
     has Str $.subtitle;
     has Str $.audiolang;
     has Str  $.pass-opts;
@@ -533,7 +534,6 @@ class LazyBrake is lazyBase
     has Bool $.dry-run = False;
     has Bool $.movie;
     has Bool $.tv;
-    has Bool $!looping = False;
     has Str  $.useBackend = 'handbrake';
 
     #| Returns our current backend object
@@ -572,6 +572,23 @@ class LazyBrake is lazyBase
     method scan ()
     {
         return self.backend().scan();
+    }
+
+    #| Eject a disc
+    method eject (Bool :$wait = False)
+    {
+        if $.permitEject
+        {
+            if $.dry-run && !$.looping
+            {
+                say "Would have ejected the disc if not for --dry-run"
+            }
+            else
+            {
+                self.printd: "Running: eject "~$.device;
+                run 'eject', $.device;
+            }
+        }
     }
 
     #| Check if we are in tv or movie mode
@@ -728,8 +745,7 @@ class LazyBrake is lazyBase
             :$volume_id,
             :$volume_size,
             :@titles
-        );
-        if $.eject
+        )
         {
             if $.dry-run && !$!looping
             {
@@ -740,6 +756,7 @@ class LazyBrake is lazyBase
                 run 'eject', $.device;
             }
         }
+        self.eject();
     }
 
     #| Outputs data from a HandBrakeCLI --scan (as returned by performHDBScan) and exits
