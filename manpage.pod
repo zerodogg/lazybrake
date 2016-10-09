@@ -98,6 +98,12 @@ I<--min-duration> when scanning, but ignores I<--max-duration>.
 If lazybrake fails to detect the movie title, you will need to provide the title
 manually. You should still supply I<--movie> to enable movie mode when you do.
 
+=item B<--backend=Str>
+
+Set a custom backend to use. The default is to use HandBrakeCLI
+(backend=handbrake). See the BACKEND section for a list of all available
+backends.
+
 =item B<--two-pass>
 
 Enables two-pass encoding. This is slower than single-pass, but can increase
@@ -149,6 +155,25 @@ Enables debugging output from lazybrake, and debugging output from both
 lazybrake and HandBrakeCLI respectively.
 
 =back
+
+=head1 BACKENDS
+
+=head2 handbrake
+
+This is the default backend. This uses HandBrakeCLI to rip DVDs. This backend
+supports all features of lazybrake.
+
+=head2 makemkv
+
+This backend uses makemkvcon from makemkv to rip DVDs. This backend is severely
+limited as compared to handbrake, and only supports some of the features of
+lazybrake. It functions as a sort of hybrid backend, HandBrakeCLI is still used
+for everything except the actual ripping process.
+
+The following features are not supported with makemkv: --two-pass, --subtitle,
+--audiolang.
+
+The following features are limited: file validation after ripping.
 
 =head1 HELP/SUPPORT
 
