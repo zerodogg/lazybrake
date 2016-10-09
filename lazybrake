@@ -28,6 +28,9 @@ use v6;
 
 my Real $version = 0.1;
 
+#| Exception thrown by errOut when it can be recovered from
+class recoverableError is Exception { }
+
 #|{ Base class for all of our other classes
   Provides all of our helpers (like printv/printd) as well as class variables
   and other methods (ie. validateFile()) that all subclasses need}
@@ -64,9 +67,13 @@ class lazyBase
     }
 
     #| Error out
-    method errOut(Str $reason, Int $retVal = 1)
+    method errOut(Str $reason, Int $retVal = 1, Bool :$canRecover = False)
     {
         $*ERR.print($reason~"\n");
+        if $canRecover && $.looping
+        {
+            recoverableError.new.throw;
+        }
         exit $retVal;
     }
 }
@@ -616,7 +623,7 @@ class LazyBrake is lazyBase
         print "done\n";
         if %scanData<titleOrder>.elems == 0
         {
-            self.errOut: "Found no titles on this disc, it does not appear to be a DVD video disc.";
+            self.errOut: "Found no titles on this disc, it does not appear to be a DVD video disc.", canRecover => True;
         }
         if @titles.elems == 0
         {
@@ -689,7 +696,7 @@ class LazyBrake is lazyBase
                             # TODO: Loop over all titles here, if they're all
                             # of the same length, then stupid DRM is in effect
                             # and we can inform the user about it.
-                            self.errOut: "Found no 'main title' on this disc, and fallback tests failed.\nTry specifying the title number manually.";
+                            self.errOut: "Found no 'main title' on this disc, and fallback tests failed.\nTry specifying the title number manually.", canRecover => True;
                         }
                     }
                     elsif $longest
@@ -698,7 +705,7 @@ class LazyBrake is lazyBase
                     }
                     else
                     {
-                        self.errOut: "No titles were found on this disc. This is probably a lazybrake bug.";
+                        self.errOut: "No titles were found on this disc. This is probably a lazybrake bug.", canRecover => True;
                     }
                 }
             }
@@ -708,12 +715,12 @@ class LazyBrake is lazyBase
             }
             if @titles > 15
             {
-                self.errOut: "Disc looks like it has DRM-by-obscurity (found "~@titles.elems~" titles), you will need to\nspecify titles manually. Exiting.";
+                self.errOut: "Disc looks like it has DRM-by-obscurity (found "~@titles.elems~" titles), you will need to\nspecify titles manually. Exiting.", canRecover => True;
             }
         }
         if @titles.elems == 0
         {
-            self.errOut: "Found no titles on this disc. Try changing --min-duration and --max-duration";
+            self.errOut: "Found no titles on this disc. Try changing --min-duration and --max-duration", canRecover => True;
         }
         self.ripTitles(
             :$name,
@@ -1014,10 +1021,32 @@ class LazyBrake is lazyBase
 
             say "Processing disc $disc-no";
             # Run the disc generation
-            self.handleDisc(
-                name => $discName,
-                @titles
-            );
+            try
+            {
+                CATCH
+                {
+                    when recoverableError
+                    {
+                        say "Skipping this disc.";
+                        my ($volume_id,$volume_size);
+                        try
+                        {
+                            ($volume_id,$volume_size) = self.parseISOInfo();
+                        }
+                        if !$volume_id
+                        {
+                            $volume_id = 'UnknownDisc'+$.discsAttempted;
+                        }
+                        @.errorDiscs.push($volume_id);
+                        self.eject();
+                        sleep 2;
+                    }
+                }
+                self.handleDisc(
+                    name => $discName,
+                    @titles
+                );
+            }
 
             say "Finished ripping disc $disc-no\n";
 
