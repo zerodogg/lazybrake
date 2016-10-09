@@ -1165,130 +1165,130 @@ sub MAIN (
     Str :$audiolang,
     Str :$backend = 'handbrake',
     *@title)
+{
+    if $version
     {
-        if $version
+        version();
+    }
+    my Int $verbosity = 0;
+    my Bool $permitEject = !$no-eject;
+    # Handle --device being missing
+    if ! $device.defined
+    {
+        if '/dev/sr0'.IO.e
         {
-            version();
+            $device = '/dev/sr0';
         }
-        my Int $verbosity = 0;
-        my Bool $eject = !$no-eject;
-        # Handle --device being missing
-        if ! $device.defined
+        elsif '/dev/cdrom'.IO.e
         {
-            if '/dev/sr0'.IO.e
-            {
-                $device = '/dev/sr0';
-            }
-            elsif '/dev/cdrom'.IO.e
-            {
-                $device = '/dev/cdrom';
-            }
-            else
-            {
-                LazyBrake.new.errOut: "Failed to detect a DVD-rom, provide a --device on the command-line";
-            }
-        }
-        # Handle --movie and --tv
-        if ($tv == True && $movie == True)
-        {
-            LazyBrake.new.errOut: "--movie and --tv conflicts";
-        }
-        if ($tv == True)
-        {
-            $movie = False;
-        }
-        elsif ($movie)
-        {
-            $tv = False;
+            $device = '/dev/cdrom';
         }
         else
         {
-            $tv = True;
+            LazyBrake.new.errOut: "Failed to detect a DVD-rom, provide a --device on the command-line";
         }
-        # Handle --debug and --verbose
-        if $full-debug
-        {
-            $verbosity = 199;
-        }
-        elsif $debug
-        {
-            $verbosity = 99;
-        }
-        elsif $verbose
-        {
-            $verbosity = 1;
-        }
-        # Validate --backend
-        if $backend ne 'handbrake' && $backend ne 'makemkv'
-        {
-            die "Unknown --backend: $backend\n";
-        }
-        my $lazybrake = LazyBrake.new(
-            :$device,
-            :$min-duration,
-            :$name,
-            :$tv,
-            :$subtitle,
-            :$audiolang,
-            :$max-duration,
-            :$dry-run,
-            :$eject,
+    }
+    # Handle --movie and --tv
+    if ($tv == True && $movie == True)
+    {
+        LazyBrake.new.errOut: "--movie and --tv conflicts";
+    }
+    if ($tv == True)
+    {
+        $movie = False;
+    }
+    elsif ($movie)
+    {
+        $tv = False;
+    }
+    else
+    {
+        $tv = True;
+    }
+    # Handle --debug and --verbose
+    if $full-debug
+    {
+        $verbosity = 199;
+    }
+    elsif $debug
+    {
+        $verbosity = 99;
+    }
+    elsif $verbose
+    {
+        $verbosity = 1;
+    }
+    # Validate --backend
+    if $backend ne 'handbrake' && $backend ne 'makemkv'
+    {
+        die "Unknown --backend: $backend\n";
+    }
+    my $lazybrake = LazyBrake.new(
+        :$device,
+        :$min-duration,
+        :$name,
+        :$tv,
+        :$subtitle,
+        :$audiolang,
+        :$max-duration,
+        :$dry-run,
+        :$permitEject,
+        :$disc-no,
+        :$scan,
+        :$movie,
+        :$verbosity,
+        :$two-pass,
+        :$pass-opts,
+        useBackend => $backend,
+        try-dvdnav => !$no-dvdnav,
+    );
+    # Output scan info if --scan was supplied
+    if $scan
+    {
+        $lazybrake.outputScanData(:$device,:$min-duration);
+    }
+    # Enter a rip loop if --loop was supplied
+    if $loop
+    {
+        $lazybrake.ripLoop(
             :$disc-no,
-            :$scan,
-            :$movie,
-            :$verbosity,
-            :$two-pass,
-            :$pass-opts,
-            useBackend => $backend,
-            try-dvdnav => !$no-dvdnav,
+            device => $device,
+            @title
         );
-        # Output scan info if --scan was supplied
-        if $scan
-        {
-            $lazybrake.outputScanData(:$device,:$min-duration);
-        }
-        # Enter a rip loop if --loop was supplied
-        if $loop
-        {
-            $lazybrake.ripLoop(
-                :$disc-no,
-                device => $device,
-                @title
-            );
-        }
-        else
-        {
-            if ! $lazybrake.isDiscPresent()
-            {
-                $lazybrake.errOut: "Found no disc in drive $device";
-            }
-            $lazybrake.handleDisc(
-                @title
-            );
-        }
     }
-
-    sub USAGE ()
+    else
     {
-        print "\n";
-        print 'Usage: '~$*PROGRAM-NAME.IO.basename~' [OPTIONS] [<title> ...]'~"\n";
-        print "\n";
-        print "Options:\n";
-        printHelp('' , '--help'             , 'View this help screen.');
-        printHelp('' , '--device=Str'       , 'Override the path to the DVD-Rom device.');
-        printHelp('' , '--max-duration=Int' , 'Set the max duration of a track to rip in seconds (when in TV mode), default is 3600.');
-        printHelp('' , '--min-duration=Int' , 'Set the minimum duration of a track to rip in seconds (when in TV mode), default is 900.');
-        printHelp('' , '--two-pass'         , 'Enable two-pass encoding (default: disabled)');
-        printHelp('' , '--name=Str'         , 'Set the name prefix for files.');
-        printHelp('' , '--pass-opts=Str'    , 'Pass an option directly to HandBrakeCLI. See the manpage for details.');
-        printHelp('' , '--tv'               , 'Enable TV mode, rips several titles from a disc (ie. episodes) - the default.');
-        printHelp('' , '--movie'            , 'Enable movie mode, rips only the main title from a disc (ie. the movie itself).');
-        printHelp('' , '--dry-run'          , 'Don\'t actually rip anything, just output the messages.');
-        printHelp('' , '--loop'             , 'Loop, rip a disc, eject it, and then rip another disc once it is inserted. Useful when ripping multi-disc TV series or multiple movies.');
-        printHelp('' , '--subtitle=Str'     , 'Set a subtitle to rip. Accepts a comma-delimited list of subtitles (default is to not rip any subtitles).');
-        printHelp('' , '--audiolang=Str'    , 'Set the audio language. Accepts a comma-delimited list of languages (if omitted, the default language track will be ripped).');
-        printHelp('' , '--disc-no=Int'      , 'Set the disc number for loop. Can be used to resume ripping on a disc other than 1.');
-        printHelp('' , '--no-eject'         , 'Don\'t eject the disc once finished ripping. Not usable with --loop.');
-        printHelp('' , '--verbose'          , 'Increase verbosity.');
-        printHelp('' , '--debug'            , 'Enable debug output.');
+        if ! $lazybrake.isDiscPresent()
+        {
+            $lazybrake.errOut: "Found no disc in drive $device";
+        }
+        $lazybrake.handleDisc(
+            @title
+        );
     }
+}
+
+sub USAGE ()
+{
+    print "\n";
+    print 'Usage: '~$*PROGRAM-NAME.IO.basename~' [OPTIONS] [<title> ...]'~"\n";
+    print "\n";
+    print "Options:\n";
+    printHelp('' , '--help'             , 'View this help screen.');
+    printHelp('' , '--device=Str'       , 'Override the path to the DVD-Rom device.');
+    printHelp('' , '--max-duration=Int' , 'Set the max duration of a track to rip in seconds (when in TV mode), default is 3600.');
+    printHelp('' , '--min-duration=Int' , 'Set the minimum duration of a track to rip in seconds (when in TV mode), default is 900.');
+    printHelp('' , '--two-pass'         , 'Enable two-pass encoding (default: disabled)');
+    printHelp('' , '--name=Str'         , 'Set the name prefix for files.');
+    printHelp('' , '--pass-opts=Str'    , 'Pass an option directly to HandBrakeCLI. See the manpage for details.');
+    printHelp('' , '--tv'               , 'Enable TV mode, rips several titles from a disc (ie. episodes) - the default.');
+    printHelp('' , '--movie'            , 'Enable movie mode, rips only the main title from a disc (ie. the movie itself).');
+    printHelp('' , '--dry-run'          , 'Don\'t actually rip anything, just output the messages.');
+    printHelp('' , '--loop'             , 'Loop, rip a disc, eject it, and then rip another disc once it is inserted. Useful when ripping multi-disc TV series or multiple movies.');
+    printHelp('' , '--subtitle=Str'     , 'Set a subtitle to rip. Accepts a comma-delimited list of subtitles (default is to not rip any subtitles).');
+    printHelp('' , '--audiolang=Str'    , 'Set the audio language. Accepts a comma-delimited list of languages (if omitted, the default language track will be ripped).');
+    printHelp('' , '--disc-no=Int'      , 'Set the disc number for loop. Can be used to resume ripping on a disc other than 1.');
+    printHelp('' , '--no-eject'         , 'Don\'t eject the disc once finished ripping. Not usable with --loop.');
+    printHelp('' , '--verbose'          , 'Increase verbosity.');
+    printHelp('' , '--debug'            , 'Enable debug output.');
+}
