@@ -541,6 +541,122 @@ class backend_mmkv is backend_HDB
         };
     }
 
+    #| Performs a scan with makemkvcon info
+    method scan () returns Hash
+    {
+        my $null = '/dev/null'.IO.open;
+        my @cmd = ('makemkvcon','info','dev:'~$.device,'--robot');
+        self.printd: "Running: "~@cmd.join(' ');
+        my $in = run @cmd, :out, :err($null);
+
+        # Keeping track of the previously seen message type, so that we can
+        # reset sInfoState whenever the message type changes, and thus avoid
+        # adding subtitles/audio tracks to the wrong title
+        my $prev = 'NULL';
+        # The results of the scan
+        my %titles = (
+            titleOrder => [],
+            titles => {}
+        );
+        # The title that is currently being processed
+        my $currTitle = -1;
+        # The current type from SINFO
+        my $sInfoState = 'NULL';
+        # The results from a length message
+        my $delayedLength;
+        while $in.exitcode == -1 || $currTitle == -1
+        {
+            for $in.out.lines -> $line
+            {
+                # Retrieve the entry type (which is the first part of a line)
+                my ($type,$opts) = ($line.split(':').first,$line);
+                # Remove the type to get an opts line
+                $opts ~~ s/^<[^:]>+://;
+                # Parse out the various components of the current line
+                my ($code,$flags,$count,$message,$data) = $opts.split(',');
+                # If the previous line type doesn't match the current type,
+                # and the title is -1 (ie. no title yet), reset sInfoState.
+                if $prev ne $type && $currTitle != -1
+                {
+                    $sInfoState = 'NULL';
+                }
+                # Store the previous type
+                $prev = $type;
+                # Filter away quotes from message and data, if we have them
+                if $message
+                {
+                    $message ~~ s:g/^\"(.*)\"$/$0/;
+                }
+                if $data
+                {
+                    $data ~~ s:g/^\"(.*)\"$/$0/;
+                }
+                # TINFO provides basic information about a title. We use it to
+                # fetch the title number and then length of said title
+                if $type eq 'TINFO'
+                {
+                    # Flag 24 indicates that the line is identifying the title
+                    # number
+                    if ($flags == 24)
+                    {
+                        $currTitle = $message;
+                        $currTitle ~~ s:g/:s\D+//;
+                        $currTitle = $currTitle.Int;
+                        %titles<titles>{$currTitle} = {duration => {}};
+                        %titles<titleOrder>.push($currTitle);
+                        if $delayedLength
+                        {
+                            my ($hour,$min,$sec) = $delayedLength.split(':');
+                            %titles<titles>{$currTitle}<duration><hours> = $hour;
+                            %titles<titles>{$currTitle}<duration><minutes> = $min;
+                            %titles<titles>{$currTitle}<duration><seconds> = $sec;
+                            %titles<titles>{$currTitle}<duration><lenInSeconds> = (($hour.Int*60)*60)+($min.Int*60)+$sec.Int;
+                        }
+                        else
+                        {
+                            $delayedLength = Nil;
+                        }
+                    }
+                    # Flag 9 indicates that the line is providing the length of
+                    # the title
+                    elsif $flags == 9
+                    {
+                        $delayedLength = $message;
+                    }
+                }
+                # SINFO provides additional info for the title, we use it to
+                # retrieve the audio and subtitle languages for the most
+                # recently seen title.
+                elsif $type eq 'SINFO'
+                {
+                    # The presence of a 6202 message indicates that it's an
+                    # audio message
+                    if $message eq '6202'
+                    {
+                        $sInfoState = 'audio';
+                    }
+                    # The presence of a 6203 message indicates that it's a
+                    # subtitle message
+                    elsif $message eq '6203'
+                    {
+                        $sInfoState = 'subtitles';
+                    }
+                    # count=3 indicates that this single line contains the ISO
+                    # language identifier for this $sInfoState entry
+                    if $sInfoState ne 'NULL' && $count eq '3'
+                    {
+                        if ! %titles<titles>{$currTitle}{$sInfoState}
+                        {
+                            %titles<titles>{$currTitle}{$sInfoState} = {};
+                        }
+                        %titles<titles>{$currTitle}{$sInfoState}{$data} = {};
+                    }
+                }
+            }
+        }
+        return %titles;
+    }
+
     #| Checks if this backend is usable
     method usable () returns Bool
     {
