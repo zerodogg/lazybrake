@@ -317,7 +317,12 @@ class backend_HDB is lazyBackend
                         $trackID   ~~ s/^\s*(\d+)\,.*/$0/;
                         $trackName ~~ s/^\s*\d+\,\s+(\S+)\s+.*/$0/;
                         $trackISO  ~~ s/^.+iso\d+\-\d+\:\s+(\S+)\).*/$0/;
-                        if ! %data<titles>.{$currentTitle}.{$saveTo}.{$trackISO}
+                        if $trackISO ~~ /\s+/
+                        {
+                            self.printd: 'Parsed out a strange trackISO for '~$currentSubtype~': "'~$trackISO~'". Did not expect spaces in it. Skipping this entry.';
+                            self.printd: 'Parsed out the following id/name variables: trackID='~$trackID~' || trackName='~$trackName;
+                        }
+                        elsif ! %data<titles>.{$currentTitle}.{$saveTo}.{$trackISO}
                         {
                             %data<titles>.{$currentTitle}.{$saveTo}.{$trackISO} = {
                                 name => $trackName,
