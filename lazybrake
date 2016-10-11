@@ -44,6 +44,8 @@ class lazyBase
     has Bool $.no-dvdnav   = False;
     has Bool $.two-pass    = False;
     has Bool $.looping is rw = False;
+    has Bool $.movie;
+    has Bool $.tv;
     has Str $.subtitle;
     has Str $.audiolang;
     has Str  $.pass-opts;
@@ -101,6 +103,24 @@ class lazyBase
             }
         }
         return True;
+    }
+
+    #| Check if we are in tv or movie mode
+    method isMode(Str $checkType) returns Bool
+    {
+        if $.movie && $.tv
+        {
+            self.errOut('Both movie and tv is True. LazyBrake-class construction error');
+        }
+        if $checkType eq 'tv' && $.tv
+        {
+            return True;
+        }
+        elsif $checkType eq 'movie' && $.movie
+        {
+            return True;
+        }
+        return False;
     }
 }
 
@@ -221,6 +241,126 @@ class lazyBackend is lazyBase
             }
         }
         return True;
+    }
+
+    #| Resolve the "main title" or episodes for a TV series
+    method resolveTitles (%scanData)
+    {
+        my @titles;
+        if self.isMode('tv')
+        {
+            @titles = self.resolveTitlesSeries(%scanData);
+        }
+        elsif self.isMode('movie')
+        {
+            @titles = self.resolveTitleMovie(%scanData);
+        }
+        else
+        {
+            self.errOut: "resolveTitles(): unable to determine mode with isMode()";
+        }
+        if @titles > 15
+        {
+            self.errOut: "Disc looks like it has DRM-by-obscurity (found "~@titles.elems~" titles), you will need to\nspecify titles manually. Exiting.", canRecover => True;
+        }
+        return @titles;
+    }
+
+    #| Resolve the "main title" for a movie
+    method resolveTitleMovie (%scanData)
+    {
+        my @titles;
+        for @(%scanData<titleOrder>) -> $title
+        {
+            if (%scanData<titles>.{$title}.<mainTitle>)
+            {
+                @titles.push($title);
+            }
+        }
+        if @titles.elems == 0
+        {
+            my @possibleTitles;
+            my $longest;
+            my $nextLongest;
+
+            for @(%scanData<titleOrder>) -> $title
+            {
+                if $longest
+                {
+                    if %scanData<titles>.{$title}.<duration>.<totalInSeconds> >= %scanData<titles>.{$longest}.<duration>.<totalInSeconds>
+                    {
+                        $nextLongest = $longest;
+                        $longest = $title;
+                    }
+                    elsif $nextLongest
+                    {
+                        if %scanData<titles>.{$title}.<duration>.<totalInSeconds> >= %scanData<titles>.{$nextLongest}.<duration>.<totalInSeconds>
+                        {
+                            $nextLongest = $longest;
+                        }
+                    }
+                    else
+                    {
+                        $nextLongest = $title;
+                    }
+                }
+                else
+                {
+                    $longest = $title;
+                }
+            }
+            if $longest && $nextLongest
+            {
+                my $longestLen70 = %scanData<titles>.{$longest}.<duration>.<totalInSeconds> * 0.70;
+                if $longestLen70 >= %scanData<titles>.{$nextLongest}.<duration>.<totalInSeconds>
+                {
+                    self.printd: "Fallback detection of title found title '$longest'";
+                    @titles.push($longest);
+                }
+                else
+                {
+                    self.printd: "The detected longest title ($longest, $longestLen70 seconds) was not 30% longer than the next longest track. Fallback detection failed.";
+                    # TODO: Loop over all titles here, if they're all
+                    # of the same length, then stupid DRM is in effect
+                    # and we can inform the user about it.
+                    self.errOut: "Found no 'main title' on this disc, and fallback tests failed.\nTry specifying the title number manually.", canRecover => True;
+                }
+            }
+            elsif $longest
+            {
+                @titles.push($longest);
+            }
+            else
+            {
+                self.errOut: "No titles were found on this disc. This is probably a lazybrake bug.", canRecover => True;
+            }
+        }
+        return @titles;
+    }
+
+    #| Resolve the episodes for a TV series
+    method resolveTitlesSeries (%scanData)
+    {
+        my @titles;
+        if $.max-duration
+        {
+            for @(%scanData<titleOrder>) -> $title
+            {
+                if %scanData<titles>.{$title}.<duration>.<totalInSeconds> < $.max-duration
+                {
+                    @titles.push($title);
+                }
+                else
+                {
+                    self.printv: "Skipping title $title because it is too long ("~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~" seconds ["~%scanData<titles>.{$title}.<duration>.<hours>~":"~%scanData<titles>.{$title}.<duration>.<minutes>~":"~%scanData<titles>.{$title}.<duration>.<seconds>~")";
+                }
+            }
+        }
+        else
+        {
+            @titles = @(%scanData<titleOrder>);
+        }
+        return @titles;
     }
 }
 
@@ -680,8 +820,6 @@ class LazyBrake is lazyBase
     has Bool $.scan;
     has Bool $.permitEject = True;
     has Bool $.dry-run = False;
-    has Bool $.movie;
-    has Bool $.tv;
     has Str  @.errorDiscs is rw;
     has Int  $.discsAttempted is rw = 0;
     has Int  $.ripSuccess is rw = 0;
@@ -720,6 +858,8 @@ class LazyBrake is lazyBase
                         :$.subtitle,
                         :$.audiolang,
                         :$.pass-opts,
+                        :$.tv,
+                        :$.movie,
                     );
                     if $backend.usable()
                     {
@@ -786,24 +926,6 @@ class LazyBrake is lazyBase
         }
     }
 
-    #| Check if we are in tv or movie mode
-    method !isMode(Str $checkType) returns Bool
-    {
-        if $.movie && $.tv
-        {
-            self.errOut('Both movie and tv is True. LazyBrake-class construction error');
-        }
-        if $checkType eq 'tv' && $.tv
-        {
-            return True;
-        }
-        elsif $checkType eq 'movie' && $.movie
-        {
-            return True;
-        }
-        return False;
-    }
-
     #| Parses isoinfo, to get metadata about a disc
     method parseISOInfo ()
     {
@@ -840,96 +962,7 @@ class LazyBrake is lazyBase
         }
         if @titles.elems == 0
         {
-            if $.max-duration && self!isMode('tv')
-            {
-                for @(%scanData<titleOrder>) -> $title
-                {
-                    if %scanData<titles>.{$title}.<duration>.<totalInSeconds> < $.max-duration
-                    {
-                        @titles.push($title);
-                    }
-                    else
-                    {
-                        self.printv: "Skipping title $title because it is too long ("~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~" seconds ["~%scanData<titles>.{$title}.<duration>.<hours>~":"~%scanData<titles>.{$title}.<duration>.<minutes>~":"~%scanData<titles>.{$title}.<duration>.<seconds>~")";
-                    }
-                }
-            }
-            elsif self!isMode('movie')
-            {
-                for @(%scanData<titleOrder>) -> $title
-                {
-                    if (%scanData<titles>.{$title}.<mainTitle>)
-                    {
-                        @titles.push($title);
-                    }
-                }
-                if @titles.elems == 0
-                {
-                    my @possibleTitles;
-                    my $longest;
-                    my $nextLongest;
-
-                    for @(%scanData<titleOrder>) -> $title
-                    {
-                        if $longest
-                        {
-                            if %scanData<titles>.{$title}.<duration>.<totalInSeconds> >= %scanData<titles>.{$longest}.<duration>.<totalInSeconds>
-                            {
-                                $nextLongest = $longest;
-                                $longest = $title;
-                            }
-                            elsif $nextLongest
-                            {
-                                if %scanData<titles>.{$title}.<duration>.<totalInSeconds> >= %scanData<titles>.{$nextLongest}.<duration>.<totalInSeconds>
-                                {
-                                    $nextLongest = $longest;
-                                }
-                            }
-                            else
-                            {
-                                $nextLongest = $title;
-                            }
-                        }
-                        else
-                        {
-                            $longest = $title;
-                        }
-                    }
-                    if $longest && $nextLongest
-                    {
-                        my $longestLen70 = %scanData<titles>.{$longest}.<duration>.<totalInSeconds> * 0.70;
-                        if $longestLen70 >= %scanData<titles>.{$nextLongest}.<duration>.<totalInSeconds>
-                        {
-                            self.printd: "Fallback detection of title found title '$longest'";
-                            @titles.push($longest);
-                        }
-                        else
-                        {
-                            self.printd: "The detected longest title ($longest, $longestLen70 seconds) was not 30% longer than the next longest track. Fallback detection failed.";
-                            # TODO: Loop over all titles here, if they're all
-                            # of the same length, then stupid DRM is in effect
-                            # and we can inform the user about it.
-                            self.errOut: "Found no 'main title' on this disc, and fallback tests failed.\nTry specifying the title number manually.", canRecover => True;
-                        }
-                    }
-                    elsif $longest
-                    {
-                        @titles.push($longest);
-                    }
-                    else
-                    {
-                        self.errOut: "No titles were found on this disc. This is probably a lazybrake bug.", canRecover => True;
-                    }
-                }
-            }
-            else
-            {
-                @titles = @(%scanData<titleOrder>);
-            }
-            if @titles > 15
-            {
-                self.errOut: "Disc looks like it has DRM-by-obscurity (found "~@titles.elems~" titles), you will need to\nspecify titles manually. Exiting.", canRecover => True;
-            }
+            @titles = self.backend().resolveTitles(%scanData);
         }
         if @titles.elems == 0
         {
