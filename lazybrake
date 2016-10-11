@@ -53,7 +53,7 @@ class lazyBase
     #| Output debugging text
     method printd(Str $message)
     {
-        self.printv($message,99);
+        self.printv('['~self.^name~'] Debug: '~$message,99);
     }
 
     #| Output verbose text
@@ -61,10 +61,6 @@ class lazyBase
     {
         if $.verbosity >= $level
         {
-            if $level == 99
-            {
-                print "Debug: ";
-            }
             print $message~"\n";
         }
     }
