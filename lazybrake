@@ -47,6 +47,8 @@ class lazyBase
     has Str $.subtitle;
     has Str $.audiolang;
     has Str  $.pass-opts;
+    #| Must be overridden by subclasses
+    has Str @.dependencies;
 
     #| Output debugging text
     method printd(Str $message)
@@ -88,7 +90,21 @@ class lazyBase
                 return True;
             }
         }
+        self.printd: $command~': not found in PATH';
         return False;
+    }
+
+    #| A generic dependency checker that just loops through @.dependencies
+    method usable () returns Bool
+    {
+        for @.dependencies -> $command
+        {
+            if !self.inPath($command)
+            {
+                return False;
+            }
+        }
+        return True;
     }
 }
 
@@ -216,6 +232,7 @@ class lazyBackend is lazyBase
 class backend_HDB is lazyBackend
 {
     has Str $.extension = 'mp4';
+    has Str @.dependencies = ('HandBrakeCLI','mp4info');
 
     #| Retrieve the HandBrakeCLI command-line, with basic parameters preconfigured
     method !HDBCommand (*@args) returns Array
@@ -507,12 +524,6 @@ class backend_HDB is lazyBackend
             success => True
         };
     }
-
-    #| Checks if this backend is usable
-    method usable () returns Bool
-    {
-        return self.inPath('HandBrakeCLI')
-    }
 }
 
 #|{ Backend: makemkvcon
@@ -522,6 +533,7 @@ class backend_HDB is lazyBackend
 class backend_mmkv is backend_HDB
 {
     has Str $.extension = 'mkv';
+    has Str @.dependencies = ('makemkvcon');
 
     #| Rips a single title using the settings provided
     method ripSingleTitle(Int :$title!, :$filename!, :%metadata!, :$preset = 'Normal', Bool :$no-dvdnav is copy = False) returns Hash
@@ -656,12 +668,6 @@ class backend_mmkv is backend_HDB
         }
         return %titles;
     }
-
-    #| Checks if this backend is usable
-    method usable () returns Bool
-    {
-        return self.inPath('makemkvcon');
-    }
 }
 
 #| Class that handles all of the actual ripping etc.
@@ -687,6 +693,7 @@ class LazyBrake is lazyBase
         if !$backend
         {
             my %attempted;
+            my $brokenBackend;
             my @backends = ( backend_HDB, backend_mmkv );
             if $.useBackend eq 'makemkv'
             {
@@ -720,14 +727,25 @@ class LazyBrake is lazyBase
                     }
                     else
                     {
-                        self.printd: 'Backend '~$backend.^name~' is not usable';
+                        self.printd: 'Backend '~$backend.^name~' reports that it is not usable';
+                        $brokenBackend = $backend;
                         $backend = Nil;
                     }
                 }
             }
             if !$backend
             {
-                self.errOut('Was unable to find any usable backend. Install HandBrakeCLI to use lazybrake.');
+                if $.useBackend
+                {
+                    self.errOut(
+                        'Unable to use the backend "'~$.useBackend~'"'~"\n"~
+                        'The following dependencies must be met: '~$brokenBackend.dependencies().join(', ')
+                    );
+                }
+                else
+                {
+                    self.errOut('Was unable to find any usable backend. Install HandBrakeCLI to use lazybrake.');
+                }
             }
         }
         return $backend;
