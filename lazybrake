@@ -711,9 +711,26 @@ class backend_mmkv is lazyBackend
     has Str $.extension = 'mkv';
     has Str @.dependencies = ('makemkvcon');
 
+    #| Verify that unsupported features are not enabled. Override this method
+    #| in your subclass if you implement the feature yourself.
+    method unsupportedFeatureCheck ()
+    {
+        if $.subtitle || $.audiolang
+        {
+            self.errOut: 'The makemkv backend does not support --subtitle or --audiolang';
+        }
+        if $.two-pass
+        {
+            self.printv: 'Note: The makemkv backend does not support (or need) --two-pass';
+        }
+    }
+
     #| Rips a single title using the settings provided
     method ripSingleTitle(Int :$title!, :$filename!, :%metadata!, :$preset = 'Normal', Bool :$no-dvdnav is copy = False) returns Hash
     {
+        # First verify that no unsupported features have been requested
+        self.unsupportedFeatureCheck();
+
         my @command = ('makemkvcon','--noscan','--message=-stderr','--progress=-stdout','mkv','dev:'~$.device,$title,'./');
         if self.runForgeroundProcess(@command) == False
         {
