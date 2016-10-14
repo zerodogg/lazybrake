@@ -13,10 +13,10 @@ Dependencies
 ------------
 
 lazybrake needs Perl 6 (see below) as well as
-[HandBrakeCLI](https://handbrake.fr/) to be installed. It also uses `mp4info`,
-`isoinfo` and `udevdm`, which are all usually installed on your average
-GNU/Linux distribution or should be easy to install. Optionally additional
-backends can use other tools as well, see the manpage.
+[HandBrakeCLI](https://handbrake.fr/) to be installed. It also uses `mp4info`
+and `udevdm`, which are all usually installed on your average GNU/Linux
+distribution or should be easy to install. Optionally additional backends can
+use other tools as well, see the manpage.
 
 ### Perl 6
 lazybrake is written in [Perl 6](http://perl6.org). Most distributions don't
