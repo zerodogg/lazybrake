@@ -842,17 +842,25 @@ class backend_mmkv is lazyBackend
                     }
                     # count=3 indicates that this single line contains the ISO
                     # language identifier for this $sInfoState entry
-                    if $sInfoState ne 'NULL' && $count eq '3'
+                    if $count eq '3'
                     {
-                        if ! %titles<titles>{$currTitle}{$sInfoState}
+                        if $sInfoState eq 'NULL'
                         {
-                            %titles<titles>{$currTitle}{$sInfoState} = {};
+                            self.printd: 'Got SINFO data, but sInfoState is null. Discarding it.';
                         }
-                        %titles<titles>{$currTitle}{$sInfoState}{$data} = {};
+                        else
+                        {
+                            if ! %titles<titles>{$currTitle}{$sInfoState}
+                            {
+                                %titles<titles>{$currTitle}{$sInfoState} = {};
+                            }
+                            %titles<titles>{$currTitle}{$sInfoState}{$data} = {};
+                        }
                     }
                 }
             }
         }
+        self.printd('Finished scanning');
         return %titles;
     }
 }
