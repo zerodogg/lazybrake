@@ -1001,33 +1001,12 @@ class LazyBrake is lazyBase
         }
     }
 
-    #| Parses isoinfo, to get metadata about a disc
-    method parseISOInfo ()
-    {
-        my $in = run 'isoinfo','-i',$.device,'-d', :out, :err;
-        my ($volume_id, $volume_size);
-        for $in.out.lines -> $entry
-        {
-            if $entry ~~ /:s.*Volume id\:\s+/
-            {
-                $volume_id = $entry;
-                $volume_id ~~ s/:s.*Volume id\:\s+//;
-            }
-            elsif $entry ~~ /:s.*Volume size is\:\s+/
-            {
-                $volume_size = $entry;
-                $volume_size ~~ s/:s.*Volume size is\:\s+//;
-            }
-        }
-        return $volume_id, $volume_size;
-    }
-
     #| Handle ripping of a single disc
     method handleDisc (:$name = $.name, *@titles)
     {
         print "Scanning disc...";
         $.discsAttempted++;
-        my ($volume_id,$volume_size) = self.parseISOInfo();
+        my %metadata = self.getDiscMetadata();
         print ".";
         my %scanData = self.scan();
         print "done\n";
@@ -1046,9 +1025,9 @@ class LazyBrake is lazyBase
         if (self.ripTitles(
             :$name,
             :%scanData,
-            :$volume_id,
-            :$volume_size,
-            :@titles
+            :@titles,
+            volume_id => %metadata<LABEL>,
+            volume_uuid => %metadata<UUID>,
         ))
         {
             $.ripSuccess++;
@@ -1089,7 +1068,7 @@ class LazyBrake is lazyBase
     }
 
     #| Construct a file name
-    method buildFileName (Int :$title!, :$volume_id!, :$volume_size!, Str :$extension is copy, Str :$name!) returns Str
+    method buildFileName (Int :$title!, :$volume_id!, :$volume_uuid!, Str :$extension is copy, Str :$name!) returns Str
     {
         if !$extension
         {
@@ -1101,13 +1080,13 @@ class LazyBrake is lazyBase
             $finalName = $name~'_';
         }
         my $padTitle = sprintf "%02d",$title;
-        $finalName ~= $padTitle~'_'~$volume_id~'_'~$volume_size~'.'~$extension;
+        $finalName ~= $padTitle~'_'~$volume_id~'_'~$volume_uuid~'.'~$extension;
         return $finalName;
     }
 
     #| Rip an array of titles, validating their size etc. once done and
     #| re-ripping if needed
-    method ripTitles(:$name!, :$volume_id, :$volume_size, :$preset = 'Normal', :%scanData!, :@titles!) returns Bool
+    method ripTitles(:$name!, :$volume_id, :$volume_uuid, :$preset = 'Normal', :%scanData!, :@titles!) returns Bool
     {
         say "Queued "~@titles.elems~" titles for ripping: @titles.join(', ')";
         my $jobNumber = 1;
@@ -1118,7 +1097,7 @@ class LazyBrake is lazyBase
             my $filename = self.ripTitle(
                 :$name,
                 :$volume_id,
-                :$volume_size,
+                :$volume_uuid,
                 :$title,
                 metadata => %(%scanData<titles>.{$title}),
                 jobTotal => @titles.elems,
@@ -1173,7 +1152,7 @@ class LazyBrake is lazyBase
                     my $filename = self.ripTitle(
                         :$name,
                         :$volume_id,
-                        :$volume_size,
+                        :$volume_uuid,
                         :$title,
                         metadata  => %(%scanData<titles>.{$title}),
                         jobTotal  => @titles.elems,
@@ -1208,7 +1187,7 @@ class LazyBrake is lazyBase
     }
 
     #| Rip a single title
-    method ripTitle(Int :$title!, :$name!, :$volume_id!, :$volume_size!, :%metadata!, :$jobNo!, :$jobTotal!, :$preset = 'Normal', Bool :$no-dvdnav) returns Str
+    method ripTitle(Int :$title!, :$name!, :$volume_id!, :$volume_uuid!, :%metadata!, :$jobNo!, :$jobTotal!, :$preset = 'Normal', Bool :$no-dvdnav) returns Str
     {
         my $i = 0;
         loop
@@ -1219,7 +1198,7 @@ class LazyBrake is lazyBase
             }
             $i++;
 
-            my $filename = self.buildFileName(:$title, :$name, :$volume_id, :$volume_size);
+            my $filename = self.buildFileName(:$title, :$name, :$volume_id, :$volume_uuid);
             if $filename.IO.e
             {
                 print "$filename: already exists (title $title)";
@@ -1392,16 +1371,18 @@ class LazyBrake is lazyBase
                     when recoverableError
                     {
                         say "Skipping this disc.";
-                        my ($volume_id,$volume_size);
+                        my %meta;
+                        my $vol;
                         try
                         {
-                            ($volume_id,$volume_size) = self.parseISOInfo();
+                            %meta = self.getDiscMetadata();
+                            $vol = %meta<LABEL>;
                         }
-                        if !$volume_id
+                        if !$vol
                         {
-                            $volume_id = 'UnknownDisc'+$.discsAttempted;
+                            $vol = 'UnknownDisc'+$.discsAttempted;
                         }
-                        @.errorDiscs.push($volume_id);
+                        @.errorDiscs.push($vol);
                         self.eject();
                         sleep 2;
                     }
