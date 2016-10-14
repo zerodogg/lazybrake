@@ -793,13 +793,14 @@ class backend_mmkv is lazyBackend
                 # fetch the title number and then length of said title
                 if $type eq 'TINFO'
                 {
-                    # Flag 24 indicates that the line is identifying the title
-                    # number
-                    if ($flags == 24)
+                    # Flag 24 (DVD) or 16 (BD) indicates that the line is
+                    # identifying the title number
+                    if ($flags == 24 || $flags == 16)
                     {
                         $currTitle = $message;
                         $currTitle ~~ s:g/:s\D+//;
                         $currTitle = $currTitle.Int;
+                        self.printd: 'Identified title '~$currTitle;
                         %titles<titles>{$currTitle} = {duration => {}};
                         %titles<titleOrder>.push($currTitle);
                         if $delayedLength
