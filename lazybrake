@@ -1470,6 +1470,11 @@ sub MAIN (
     # Output scan info if --scan was supplied
     if $scan
     {
+        if ! $lazybrake.isDiscPresent()
+        {
+            say "Found no disc in drive $device";
+            exit 0;
+        }
         $lazybrake.outputScanData(:$device,:$min-duration);
     }
     # Enter a rip loop if --loop was supplied
