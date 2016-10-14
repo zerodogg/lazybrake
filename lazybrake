@@ -1043,9 +1043,9 @@ class LazyBrake is lazyBase
     {
         print "Scanning disc...";
         my %scanData = self.scan();
-        my ($volume_id,$volume_size) = self.parseISOInfo();
+        my %discMeta = self.getDiscMetadata();
         print "done\n";
-        say "Disc reports its name as $volume_id";
+        say "Disc reports its name as %discMeta<LABEL>";
         for @(%scanData<titleOrder>) -> $title
         {
             print "Title $title";
@@ -1271,18 +1271,67 @@ class LazyBrake is lazyBase
         }
     }
 
-    #| Check if a disc is present in the drive
-    method isDiscPresent() returns Bool
+    #| Retrieve metadata about the inserted disc
+    method getDiscMetadata() returns Hash
     {
+        state %cache = (
+            changed => 0,
+            data => Nil
+        );
+        # If it has changed the last three seconds, use the cached one
+        if %cache<changed> > (time - 3)
+        {
+            self.printd: 'getDiscMetadata(): using cached disc metadata';
+            return %cache<data>;
+        }
+        my %meta = (
+            BD => False,
+            DVD => False,
+            MEDIA => False,
+            LABEL => Nil,
+            UUID => Nil,
+        );
+        self.printd: 'getDiscMetadata(): Asking udevadm for disc metadata';
         my $data = run 'udevadm', 'info', '-q','env','-n',$.device, :err('/dev/null'.IO.open), :out;
         for $data.out.lines -> $line
         {
-            if $line ~~ /ID_CDROM_MEDIA_DVD\=1/
+            # Make it writeable
+            my $content = $line;
+            if $content ~~ /ID_CDROM_MEDIA_DVD\=1/
             {
-                return True;
+                %meta<DVD> = True;
+            }
+            elsif $content ~~ /ID_CDROM_MEDIA_BD\=1/
+            {
+                %meta<BD> = True;
+            }
+            elsif $content ~~ /ID_CDROM_MEDIA\=1/
+            {
+                %meta<MEDIA> = True;
+            }
+            elsif $content ~~ s/^ID_FS_LABEL\=//
+            {
+                %meta<LABEL> = $content.chomp;
+            }
+            elsif $content ~~ s/^ID_FS_UUID\=//
+            {
+                %meta<UUID> = $content.chomp;
             }
         }
-        return False;
+        # If we have a BD or DVD, store this in the cache
+        if %meta<DVD> || %meta<BD>
+        {
+            %cache<changed> = time;
+            %cache<data> = %meta;
+        }
+        return %meta;
+    }
+
+    #| Check if a disc is present in the drive
+    method isDiscPresent() returns Bool
+    {
+        my %info = self.getDiscMetadata();
+        return %info<MEDIA>;
     }
 
     #| Do a rip loop
