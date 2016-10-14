@@ -361,17 +361,23 @@ class lazyBackend is lazyBase
     method resolveTitlesSeries (%scanData)
     {
         my @titles;
-        if $.max-duration
+        if $.max-duration || $.min-duration
         {
             for @(%scanData<titleOrder>) -> $title
             {
-                if %scanData<titles>.{$title}.<duration>.<totalInSeconds> < $.max-duration
+                my $totalInSeconds = %scanData<titles>.{$title}.<duration>.<totalInSeconds>;
+                if $totalInSeconds <= $.max-duration && $totalInSeconds >= $.min-duration
                 {
                     @titles.push($title);
                 }
                 else
                 {
-                    self.printv: "Skipping title $title because it is too long ("~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~" seconds ["~%scanData<titles>.{$title}.<duration>.<hours>~":"~%scanData<titles>.{$title}.<duration>.<minutes>~":"~%scanData<titles>.{$title}.<duration>.<seconds>~")";
+                    my $too = 'long';
+                    if $totalInSeconds < $.min-duration
+                    {
+                        $too = 'short';
+                    }
+                    self.printv: "Skipping title $title because it is too $too ("~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~" seconds ["~%scanData<titles>.{$title}.<duration>.<hours>~":"~%scanData<titles>.{$title}.<duration>.<minutes>~":"~%scanData<titles>.{$title}.<duration>.<seconds>~")";
                 }
             }
         }
