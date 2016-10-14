@@ -420,10 +420,20 @@ class backend_HDB is lazyBackend
             titles     => {}
         );
 
-        while $in.exitcode == -1 || $currentTitle == -1
+        # Used to keep track of roundtrips through the loop where no data was parsed
+        # so that we can time out if it takes too long (defined as 20 seconds of inactivity).
+        my $noReplyNo = 0;
+        while $in.exitcode == -1 || ($currentTitle == -1 && $noReplyNo < 200)
         {
+            $noReplyNo++;
+            if ($noReplyNo % 10) == 0
+            {
+                self.printd: "No data for $noReplyNo loops. Waiting one second.";
+                sleep 1;
+            }
             for $in.err.lines -> $line
             {
+                $noReplyNo = 0;
                 my $entry = $line;
 
                 if $entry ~~ s/:s^\+ title (\d+)\:/$0/
@@ -742,10 +752,20 @@ class backend_mmkv is lazyBackend
         my $sInfoState = 'NULL';
         # The results from a length message
         my $delayedLength;
-        while $in.exitcode == -1 || $currTitle == -1
+        # Used to keep track of roundtrips through the loop where no data was parsed
+        # so that we can time out if it takes too long (defined as 20 seconds of inactivity).
+        my $noReplyNo = 0;
+        while $in.exitcode == -1 || ($currTitle == -1 && $noReplyNo < 200)
         {
+            $noReplyNo++;
+            if ($noReplyNo % 10) == 0
+            {
+                self.printd: "No data for $noReplyNo loops. Waiting one second.";
+                sleep 1;
+            }
             for $in.out.lines -> $line
             {
+                $noReplyNo = 0;
                 # Retrieve the entry type (which is the first part of a line)
                 my ($type,$opts) = ($line.split(':').first,$line);
                 # Remove the type to get an opts line
