@@ -122,6 +122,25 @@ class lazyBase
         }
         return False;
     }
+
+    #| Instantiate a backend
+    method instantiateBackend ($backendClass)
+    {
+        return $backendClass.new(
+            :$.try-dvdnav,
+            :$.min-duration,
+            :$.max-duration,
+            :$.device,
+            :$.verbosity,
+            :$.no-dvdnav,
+            :$.two-pass,
+            :$.subtitle,
+            :$.audiolang,
+            :$.pass-opts,
+            :$.tv,
+            :$.movie,
+        );
+    }
 }
 
 #| Base class for backends
@@ -847,20 +866,7 @@ class LazyBrake is lazyBase
                 if !%attempted{$backend.^name}
                 {
                     %attempted{$backend.^name} = True;
-                    $backend = $backendClass.new(
-                        :$.try-dvdnav,
-                        :$.min-duration,
-                        :$.max-duration,
-                        :$.device,
-                        :$.verbosity,
-                        :$.no-dvdnav,
-                        :$.two-pass,
-                        :$.subtitle,
-                        :$.audiolang,
-                        :$.pass-opts,
-                        :$.tv,
-                        :$.movie,
-                    );
+                    $backend = self.instantiateBackend($backendClass);
                     if $backend.usable()
                     {
                         self.printd: 'Instantiated backend: '~$backend.^name;
