@@ -1355,7 +1355,7 @@ class LazyBrake is lazyBase
     method isDiscPresent() returns Bool
     {
         my %info = self.getDiscMetadata();
-        return %info<MEDIA>;
+        return ( %info<MEDIA> || %info<DVD> || %info<BD> );
     }
 
     #| Do a rip loop
