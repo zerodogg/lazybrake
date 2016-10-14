@@ -769,6 +769,10 @@ class backend_mmkv is lazyBackend
         my $sInfoState = 'NULL';
         # The results from a length message
         my $delayedLength;
+        # Guessed ID for audio/sub language. makemkvcon won't use this, but in a
+        # hybrid makemkvcon/HandBrakeCLI backend it can be used to try to rip
+        # the correct language/subtitle.
+        my $guessedTrackID;
         # Used to keep track of roundtrips through the loop where no data was parsed
         # so that we can time out if it takes too long (defined as 20 seconds of inactivity).
         my $noReplyNo = 0;
@@ -847,15 +851,17 @@ class backend_mmkv is lazyBackend
                 {
                     # The presence of a 6202 message indicates that it's an
                     # audio message
-                    if $message eq '6202'
+                    if $message eq '6202' && $sInfoState ne 'audio'
                     {
                         $sInfoState = 'audio';
+                        $guessedTrackID = 0;
                     }
                     # The presence of a 6203 message indicates that it's a
                     # subtitle message
-                    elsif $message eq '6203'
+                    elsif $message eq '6203' && $sInfoState ne 'subtitles'
                     {
                         $sInfoState = 'subtitles';
+                        $guessedTrackID = 0;
                     }
                     # count=3 indicates that this single line contains the ISO
                     # language identifier for this $sInfoState entry
@@ -867,11 +873,15 @@ class backend_mmkv is lazyBackend
                         }
                         else
                         {
+                            $guessedTrackID++;
                             if ! %titles<titles>{$currTitle}{$sInfoState}
                             {
                                 %titles<titles>{$currTitle}{$sInfoState} = {};
                             }
-                            %titles<titles>{$currTitle}{$sInfoState}{$data} = {};
+                            %titles<titles>{$currTitle}{$sInfoState}{$data} = {
+                                name => $data,
+                                id   => $guessedTrackID,
+                            };
                         }
                     }
                 }
