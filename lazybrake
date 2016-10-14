@@ -867,6 +867,10 @@ class LazyBrake is lazyBase
             {
                 @backends = (backend_HDB);
             }
+            elsif $.useBackend ne 'DEFAULT'
+            {
+                self.errOut("Unknown --backend: $backend");
+            }
             for @backends -> $backendClass
             {
                 if !%attempted{$backend.^name}
@@ -1443,11 +1447,6 @@ sub MAIN (
     elsif $verbose
     {
         $verbosity = 1;
-    }
-    # Validate --backend
-    if $backend ne 'handbrake' && $backend ne 'makemkv'
-    {
-        die "Unknown --backend: $backend\n";
     }
     my $lazybrake = LazyBrake.new(
         :$device,
