@@ -167,13 +167,17 @@ supports all features of lazybrake.
 
 This backend uses makemkvcon from makemkv to rip DVDs. This backend is severely
 limited as compared to handbrake, and only supports some of the features of
-lazybrake. It functions as a sort of hybrid backend, HandBrakeCLI is still used
-for everything except the actual ripping process.
+lazybrake.
 
 The following features are not supported with makemkv: --two-pass, --subtitle,
 --audiolang.
 
 The following features are limited: file validation after ripping.
+
+=head2 hybrid-hdbrip
+
+This backend uses makemkvcon from makemkv to scan DVDs, but lets HandBrakeCLI
+do the actual ripping. This can help title detection in certain cases.
 
 =head1 HELP/SUPPORT
 

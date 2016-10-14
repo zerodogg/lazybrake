@@ -836,6 +836,23 @@ class backend_mmkv is lazyBackend
     }
 }
 
+#| Backend: Hybrid between HandBrakeCLI and makemkv, using HandBrakeCLI for ripping, makemkv for scanning
+class backend_hybrid_mkvscan is backend_HDB
+{
+    has Str @.dependencies = ('HandBrakeCLI','mp4info','makemkvcon');
+
+    method scan ()
+    {
+        state $mkvbackend;
+        if !$mkvbackend
+        {
+            $mkvbackend = self.instantiateBackend(backend_mmkv);
+        }
+        self.printd: 'Passing scanning on to backend_mmkv';
+        return $mkvbackend.scan();
+    }
+}
+
 #| Class that handles all of the actual ripping etc.
 class LazyBrake is lazyBase
 {
@@ -866,6 +883,10 @@ class LazyBrake is lazyBase
             elsif $.useBackend eq 'handbrake'
             {
                 @backends = (backend_HDB);
+            }
+            elsif $.useBackend eq 'hybrid-hdbrip'
+            {
+                @backends = (backend_hybrid_mkvscan);
             }
             elsif $.useBackend ne 'DEFAULT'
             {
