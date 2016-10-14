@@ -2,7 +2,7 @@
 # moment.
 =head1 NAME
 
-lazybrake - A command-line wrapper for HandBrakeCLI that streamlines and automates ripping
+lazybrake - A command-line wrapper for various DVD/BD rippers that streamlines and automates ripping
 
 =head1 SYNOPSIS
 
@@ -10,13 +10,13 @@ lazybrake [OPTIONS] [<title> ...]
 
 =head1 SUMMARY
 
-lazybrake is a command-line wrapper for HandBrakeCLI that streamlines and
-automates ripping. It can automate ripping of many discs, either of movies or
-TV series, by just starting the rip automatically when a disc is inserted and
-then ejecting it once the ripping is done, ready to accept a new disc. For TV
-series it will rip individual episodes (if possible), and for movies it will
-rip the main title. You can also manually provide it with a list of titles to
-rip, useful for certain stubborn discs.
+lazybrake is a command-line wrapper for various DVD/BD rippers, ie.
+HandBrakeCLI, that streamlines and automates ripping. It can automate ripping
+of many discs, either of movies or TV series, by just starting the rip
+automatically when a disc is inserted and then ejecting it once the ripping is
+done, ready to accept a new disc. For TV series it will rip individual episodes
+(if possible), and for movies it will rip the main title. You can also manually
+provide it with a list of titles to rip, useful for certain stubborn discs.
 
 =head1 OPTIONS
 
@@ -165,7 +165,7 @@ supports all features of lazybrake.
 
 =head2 makemkv
 
-This backend uses makemkvcon from makemkv to rip DVDs. This backend is severely
+This backend uses makemkvcon from makemkv to rip DVDs or BDs. This backend is severely
 limited as compared to handbrake, and only supports some of the features of
 lazybrake.
 
