@@ -921,6 +921,15 @@ class LazyBrake is lazyBase
             {
                 self.errOut("Unknown --backend: $backend");
             }
+            else
+            {
+                my %discMeta = self.getDiscMetadata();
+                if %discMeta<BD>
+                {
+                    self.printv: 'Disc is BD, only allowing the makemkv backend';
+                    @backends = ( backend_mmkv );
+                }
+            }
             for @backends -> $backendClass
             {
                 if !%attempted{$backend.^name}
