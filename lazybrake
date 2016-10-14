@@ -690,7 +690,7 @@ class backend_HDB is lazyBackend
   Note: This is a hybrid backend. makemkvcon is used for ripping, but HandBrakeCLI
   still handles scanning
 }
-class backend_mmkv is backend_HDB
+class backend_mmkv is lazyBackend
 {
     has Str $.extension = 'mkv';
     has Str @.dependencies = ('makemkvcon');
@@ -782,7 +782,7 @@ class backend_mmkv is backend_HDB
                             %titles<titles>{$currTitle}<duration><hours> = $hour;
                             %titles<titles>{$currTitle}<duration><minutes> = $min;
                             %titles<titles>{$currTitle}<duration><seconds> = $sec;
-                            %titles<titles>{$currTitle}<duration><lenInSeconds> = (($hour.Int*60)*60)+($min.Int*60)+$sec.Int;
+                            %titles<titles>{$currTitle}<duration><totalInSeconds> = (($hour.Int*60)*60)+($min.Int*60)+$sec.Int;
                         }
                         else
                         {
