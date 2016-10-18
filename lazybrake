@@ -184,8 +184,8 @@ class lazyBackend is lazyBase
 
         if %fileMeta<video>:exists
         {
-            my $maxDuration = $duration*1.001;
-            my $minDuration = $duration*0.995;
+            my $maxDuration = $duration*1.005;
+            my $minDuration = $duration*0.994;
             if %fileMeta<video> >= $minDuration && %fileMeta<video> <= $maxDuration
             {
                 return True;
