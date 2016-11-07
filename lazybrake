@@ -267,6 +267,14 @@ class lazyBackend is lazyBase
     method resolveTitles (%scanData)
     {
         my @titles;
+        # In debug mode, output some useful info
+        if $.verbosity >= 99
+        {
+            for @(%scanData<titleOrder>) -> $title
+            {
+                self.printd('Identified title '~$title~' [length: '~%scanData<titles>.{$title}.<duration>.<totalInSeconds>~']');
+            }
+        }
         if self.isMode('tv')
         {
             @titles = self.resolveTitlesSeries(%scanData);
