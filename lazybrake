@@ -139,6 +139,7 @@ class lazyBase
             :$.pass-opts,
             :$.tv,
             :$.movie,
+            :$.looping,
         );
     }
 }
