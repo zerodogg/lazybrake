@@ -1085,6 +1085,27 @@ class LazyBrake is lazyBase
     has Int  $.ripSuccess is rw = 0;
     has Str  $.useBackend = 'DEFAULT';
 
+    method getBackendByName (Str $name)
+    {
+        if $name eq 'makemkv'
+        {
+            return backend_mmkv;
+        }
+        elsif $name eq 'handbrake'
+        {
+            return backend_HDB;
+        }
+        elsif $name eq 'hybrid-mkv-hdb'
+        {
+            return backend_hybrid_mkvscan;
+        }
+        elsif $name eq 'hybrid-lsdvd-hdb'
+        {
+            return backend_hybrid_lsdvdscan;
+        }
+        return Nil;
+    }
+
     #| Returns our current backend object
     method backend ()
     {
@@ -1093,26 +1114,21 @@ class LazyBrake is lazyBase
         {
             my %attempted;
             my $brokenBackend;
-            my @backends = ( backend_HDB, backend_mmkv );
-            if $.useBackend eq 'makemkv'
+            my @backends = ( { name => 'handbrake', obj => backend_HDB}, { name => 'makemkv', obj => backend_mmkv });
+            my $requested;
+            if $.useBackend && $.useBackend ne 'DEFAULT'
             {
-                @backends = (backend_mmkv);
-            }
-            elsif $.useBackend eq 'handbrake'
-            {
-                @backends = (backend_HDB);
-            }
-            elsif $.useBackend eq 'hybrid-mkv-hdb'
-            {
-                @backends = (backend_hybrid_mkvscan);
-            }
-            elsif $.useBackend eq 'hybrid-lsdvd-hdb'
-            {
-                @backends = (backend_hybrid_lsdvdscan);
-            }
-            elsif $.useBackend ne 'DEFAULT'
-            {
-                self.errOut("Unknown --backend: $.useBackend");
+                @backends = ();
+                for $.useBackend.split(',') -> $request
+                {
+                    $requested = self.getBackendByName($request);
+                    if defined $requested
+                    {
+                        self.errOut("Unknown --backend: $request");
+                    }
+                    self.printd: 'Resolved backend "'~$request~'" to class '~$requested.^name;
+                    @backends.push({ name => $request, obj => $requested });
+                }
             }
             else
             {
@@ -1120,14 +1136,15 @@ class LazyBrake is lazyBase
                 if %discMeta<BD>
                 {
                     self.printv: 'Disc is BD, only allowing the makemkv backend';
-                    @backends = ( backend_mmkv );
+                    @backends = ( { name => 'makemkv', obj => backend_mmkv } );
                 }
             }
-            for @backends -> $backendClass
+            for @backends -> %tryBackend
             {
-                if !%attempted{$backend.^name}
+                my $backendClass = %tryBackend<obj>;
+                if !%attempted{$backendClass.^name}
                 {
-                    %attempted{$backend.^name} = True;
+                    %attempted{$backendClass.^name} = True;
                     $backend = self.instantiateBackend($backendClass);
                     if $backend.usable()
                     {
@@ -1137,7 +1154,7 @@ class LazyBrake is lazyBase
                     else
                     {
                         self.printd: 'Backend '~$backend.^name~' reports that it is not usable';
-                        $brokenBackend = $backend;
+                        $brokenBackend = { objInstance => $backend, name => %tryBackend<name> };
                         $backend = Nil;
                     }
                 }
@@ -1147,8 +1164,8 @@ class LazyBrake is lazyBase
                 if $.useBackend
                 {
                     self.errOut(
-                        'Unable to use the backend "'~$.useBackend~'"'~"\n"~
-                        'The following dependencies must be met: '~$brokenBackend.dependencies().join(', ')
+                        'Unable to use the backend "'~$brokenBackend<name>~'"'~"\n"~
+                        'The following dependencies must be met: '~$brokenBackend<objInstance>.dependencies().join(', ')
                     );
                 }
                 else
@@ -1675,7 +1692,7 @@ sub MAIN (
     Str  :$pass-opts,
     Str :$subtitle,
     Str :$audiolang,
-    Str :$backend = 'handbrake',
+    Str :$backend,
     *@title)
 {
     if $version

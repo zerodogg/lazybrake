@@ -101,8 +101,9 @@ manually. You should still supply I<--movie> to enable movie mode when you do.
 =item B<--backend=Str>
 
 Set a custom backend to use. The default is to use HandBrakeCLI
-(backend=handbrake). See the BACKEND section for a list of all available
-backends.
+(backend=handbrake). You may list multiple backends, separated by commas. In
+that case the first backend that reports that it is usable will be used.  See
+the BACKEND section for a list of all available backends.
 
 =item B<--two-pass>
 
