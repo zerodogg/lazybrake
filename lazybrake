@@ -123,6 +123,32 @@ class lazyBase
         return False;
     }
 
+    #| Parse a timestamp (HH:MM:SS or HH:MM:SS.xx)
+    method parseTimestamp(Str $timestamp is copy)
+    {
+        try
+        {
+            CATCH
+            {
+                default
+                {
+                    self.printd('ERROR parsing '~$timestamp);
+                    .rethrow;
+                }
+            }
+            $timestamp ~~ s/\.\d+$//;
+            my $time = $timestamp.split(':');
+            my Int $len = ( +$time[2] ) + (+$time[1] *60) + ((+$time[0] *60)*60);
+            my %parsed = (
+                hours          => $time[0],
+                minutes        => $time[1],
+                seconds        => $time[2],
+                totalInSeconds => $len.Int,
+            );
+            return %parsed;
+        }
+    }
+
     #| Instantiate a backend
     method instantiateBackend ($backendClass)
     {
@@ -471,14 +497,7 @@ class backend_HDB is lazyBackend
                 }
                 elsif $entry ~~ s/:s^\s+\+\s+duration\:\s+//
                 {
-                    my $time = $entry.split(/\:/);
-                    my Int $len = ( +$time[2] ) + (+$time[1] *60) + ((+$time[0] *60)*60);
-                    %data{'titles'}.{$currentTitle}.{'duration'} = {
-                        hours          => $time[0],
-                        minutes        => $time[1],
-                        seconds        => $time[2],
-                        totalInSeconds => $len.Int,
-                    };
+                    %data{'titles'}.{$currentTitle}.{'duration'} = self.parseTimestamp($time);
                 }
                 elsif $entry ~~ /:s^  \+ Main Feature/ && $currentTitle.defined
                 {
@@ -844,11 +863,7 @@ class backend_mmkv is lazyBackend
                         %titles<titleOrder>.push($currTitle);
                         if $delayedLength
                         {
-                            my ($hour,$min,$sec) = $delayedLength.split(':');
-                            %titles<titles>{$currTitle}<duration><hours> = $hour;
-                            %titles<titles>{$currTitle}<duration><minutes> = $min;
-                            %titles<titles>{$currTitle}<duration><seconds> = $sec;
-                            %titles<titles>{$currTitle}<duration><totalInSeconds> = (($hour.Int*60)*60)+($min.Int*60)+$sec.Int;
+                            %titles<titles>{$currTitle}<duration> = self.parseTimestamp($delayedLength);
                         }
                         else
                         {
