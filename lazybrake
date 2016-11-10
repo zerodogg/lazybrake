@@ -497,7 +497,7 @@ class backend_HDB is lazyBackend
                 }
                 elsif $entry ~~ s/:s^\s+\+\s+duration\:\s+//
                 {
-                    %data{'titles'}.{$currentTitle}.{'duration'} = self.parseTimestamp($time);
+                    %data{'titles'}.{$currentTitle}.{'duration'} = self.parseTimestamp($entry);
                 }
                 elsif $entry ~~ /:s^  \+ Main Feature/ && $currentTitle.defined
                 {
@@ -979,7 +979,7 @@ class LazyBrake is lazyBase
             }
             elsif $.useBackend ne 'DEFAULT'
             {
-                self.errOut("Unknown --backend: $backend");
+                self.errOut("Unknown --backend: $.useBackend");
             }
             else
             {
