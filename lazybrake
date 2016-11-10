@@ -168,6 +168,35 @@ class lazyBase
             :$.looping,
         );
     }
+
+    #| Generic function to read input from a subprocess
+    method getInputFrom (@cmd,$capture = 'out')
+    {
+        my $out;
+        # Mask any localization
+        my $LC_ALL = %*ENV<LC_ALL>;
+        %*ENV<LC_ALL> = 'C';
+        self.printd: "Running: "~@cmd.join(' ');
+        if $capture eq 'out'
+        {
+           $out = run @cmd, :out, :err('/dev/null'.IO.open);
+        }
+        elsif $capture eq 'err'
+        {
+           $out = run @cmd, :err, :out('/dev/null'.IO.open);
+        }
+        elsif $capture eq 'both'
+        {
+           $out = run @cmd, :out, :err;
+        }
+        else
+        {
+            die: 'Unknown capture: '~$capture;
+        }
+        # Reset LC_ALL again
+        %*ENV<LC_ALL> = $LC_ALL;
+        return $out;
+    }
 }
 
 #| Base class for backends
@@ -449,8 +478,7 @@ class backend_scan_lsdvd is lazyBackend
         # -s = list subtitles
         my @cmd = ('lsdvd','-Oh','-a','-s',$.device);
         my $null = '/dev/null'.IO.open;
-        self.printd: "Running: "~@cmd.join(' ');
-        my $in = run @cmd, :err($null), :out;
+        my $in = self.getInputFrom(@cmd);
         my $currentTitle = -1;
         my $currentSubtype;
         my %data = (
