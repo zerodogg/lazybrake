@@ -164,6 +164,7 @@ class lazyBackend is lazyBase
             $type   ~~ s/:s^\d+\s+(\S+)\s+.+/$0/;
             $length ~~ s/:s^.*\s(\S+)\s+secs\,.*/$0/;
             %info{$type} = $length;
+            self.printd('Loaded metadata on "'~$file~'": '~$type~'='~$length);
         }
         return %info;
     }
@@ -176,6 +177,7 @@ class lazyBackend is lazyBase
             self.printv: "$file: failed validation due to non-existant file";
             return False;
         }
+        self.printd: 'Validating '~$file~' (size: '~$file.IO.s~')';
 
         my %fileMeta;
         if $.extension eq 'mp4'
@@ -189,6 +191,7 @@ class lazyBackend is lazyBase
             my $minDuration = $duration*0.994;
             if %fileMeta<video> >= $minDuration && %fileMeta<video> <= $maxDuration
             {
+                self.printd: $file~': succeeded track length validation';
                 return True;
             }
             else
@@ -215,6 +218,10 @@ class lazyBackend is lazyBase
             self.printd: "$file: is smaller than the minimum file size expected for this file ($minSizeBytes bytes)";
             return False;
         }
+        else
+        {
+            self.printd: $file~': succeeded size validation';
+        }
 
         # Drop "bytesPerSecond" checks if we have no $largestRipped
         if $largestRipped == 0.0
@@ -227,6 +234,7 @@ class lazyBackend is lazyBase
 
         if $bytesPerSecond >= $largestRipped
         {
+            self.printd: $file~': succeeded bytesPerSecond test';
             return True;
         }
         else
@@ -608,6 +616,7 @@ class backend_HDB is lazyBackend
                 }
                 if $entries && %metadata{$dataType}.{$entries}
                 {
+                    self.printd: 'Using '~%metadata{$dataType}.{$entries}.<id>~' as '~$dataType~' ID for '~$origTitle;
                     @final.push(%metadata{$dataType}.{$entries}.<id>);
                 }
                 else
