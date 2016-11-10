@@ -174,7 +174,7 @@ The following features are not supported with makemkv: --two-pass, --subtitle,
 
 The following features are limited: file validation after ripping.
 
-=head2 hybrid-hdbrip
+=head2 hybrid-mkv-hdb
 
 This backend uses makemkvcon from makemkv to scan DVDs, but lets HandBrakeCLI
 do the actual ripping. This can help title detection in certain cases.

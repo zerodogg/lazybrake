@@ -949,7 +949,7 @@ class LazyBrake is lazyBase
             {
                 @backends = (backend_HDB);
             }
-            elsif $.useBackend eq 'hybrid-hdbrip'
+            elsif $.useBackend eq 'hybrid-mkv-hdb'
             {
                 @backends = (backend_hybrid_mkvscan);
             }
