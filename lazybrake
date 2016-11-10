@@ -432,6 +432,91 @@ class lazyBackend is lazyBase
     }
 }
 
+#| Scan-only backend: lsdvd
+class backend_scan_lsdvd is lazyBackend
+{
+    #| This backend is NEVER directly usable
+    method usable () returns Bool
+    {
+        return False;
+    }
+
+    #| Performs a scan with lsdvd
+    method scan () returns Hash
+    {
+        # -Oh = enable "human" output (which is fairly parseable)
+        # -a = list audio streams
+        # -s = list subtitles
+        my @cmd = ('lsdvd','-Oh','-a','-s',$.device);
+        my $null = '/dev/null'.IO.open;
+        self.printd: "Running: "~@cmd.join(' ');
+        my $in = run @cmd, :err($null), :out;
+        my $currentTitle = -1;
+        my $currentSubtype;
+        my %data = (
+            titleOrder => [],
+            titles     => {}
+        );
+        # Used to keep track of roundtrips through the loop where no data was parsed
+        # so that we can time out if it takes too long (defined as 20 seconds of inactivity).
+        my $noReplyNo = 0;
+        while $in.exitcode == -1 || ($currentTitle == -1 && $noReplyNo < 200)
+        {
+            $noReplyNo++;
+            if ($noReplyNo % 10) == 0
+            {
+                self.printd: "No data for $noReplyNo loops. Waiting one second.";
+                sleep 1;
+            }
+            for $in.out.lines -> $line
+            {
+                $noReplyNo = 0;
+                if $line ~~ /:s^Title\:/
+                {
+                    my $title = $line;
+                    my $length = $line;
+
+                    $title ~~ s/:s^Title\:\s+0*(\d+)\D.*/$0/;
+                    $length ~~ s/:s^.*Length\:\s+(\S+)\s+.*/$0/;
+                    $currentTitle = $title;
+                    %data<titles>.{$title} = {
+                        subtitles => {},
+                        mainTitle => False,
+                        duration => self.parseTimestamp($length),
+                    };
+                    %data<titleOrder>.push($title);
+                }
+                elsif $currentTitle == -1
+                {
+                    next;
+                }
+                elsif $line ~~ /^\s+(Audio|Subtitle):/
+                {
+                    my $saveTo;
+                    my $type = $line;
+                    my $id   = $line;
+                    my $lang = $line;
+
+                    $type ~~ s/:s^\s+(Audio|Subtitle).*/$0/;
+                    $id   ~~ s/:s^\s+(Audio|Subtitle)\:\s+0*(\d+)\,?\s+.*/$0/;
+                    $lang ~~ s/:s^.*Language\:\s+(\S+)\s.*/$0/;
+
+                    $saveTo = $type.lc;
+                    if $type eq 'subtitle'
+                    {
+                        $saveTo = 'subtitles';
+                    }
+                    %data<titles>.{$currentTitle}.{$saveTo}.{$lang} = {
+                        name => 'FIXME',
+                        id => $id,
+                    };
+                }
+            }
+        }
+        return %data;
+    }
+}
+
 #| Backend: HandBrakeCLI
 class backend_HDB is lazyBackend
 {
@@ -942,6 +1027,22 @@ class backend_hybrid_mkvscan is backend_HDB
     }
 }
 
+#| Backend: Hybrid between HandBrakeCLI and lsdvd, using HandBrakeCLI for ripping, lsdvd for scanning
+class backend_hybrid_lsdvdscan is backend_HDB
+{
+    has Str @.dependencies = ('HandBrakeCLI','mp4info','lsdvd');
+
+    method scan ()
+    {
+        state $lsdvbackend;
+        if !$lsdvbackend
+        {
+            $lsdvbackend = self.instantiateBackend(backend_scan_lsdvd);
+        }
+        return $lsdvbackend.scan();
+    }
+}
+
 #| Class that handles all of the actual ripping etc.
 class LazyBrake is lazyBase
 {
@@ -976,6 +1077,10 @@ class LazyBrake is lazyBase
             elsif $.useBackend eq 'hybrid-mkv-hdb'
             {
                 @backends = (backend_hybrid_mkvscan);
+            }
+            elsif $.useBackend eq 'hybrid-lsdvd-hdb'
+            {
+                @backends = (backend_hybrid_lsdvdscan);
             }
             elsif $.useBackend ne 'DEFAULT'
             {

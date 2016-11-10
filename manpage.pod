@@ -179,6 +179,11 @@ The following features are limited: file validation after ripping.
 This backend uses makemkvcon from makemkv to scan DVDs, but lets HandBrakeCLI
 do the actual ripping. This can help title detection in certain cases.
 
+=head2 hybrid-lsdvd-hdb
+
+This backend uses lsdvd to scan DVDs and HandBrakeCLI to do the actual ripping.
+This is useful in cases where HandBrakeCLI fails to scan a DVD.
+
 =head1 HELP/SUPPORT
 
 If you need additional help, please visit the website at
