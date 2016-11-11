@@ -197,6 +197,62 @@ class lazyBase
         %*ENV<LC_ALL> = $LC_ALL;
         return $out;
     }
+
+    #| Retrieve metadata about the inserted disc
+    method getDiscMetadata() returns Hash
+    {
+        state %cache = (
+            changed => 0,
+            data => Nil
+        );
+        # If it has changed the last three seconds, use the cached one
+        if %cache<changed> > (time - 3)
+        {
+            self.printd: 'getDiscMetadata(): using cached disc metadata';
+            return %cache<data>;
+        }
+        my %meta = (
+            BD => False,
+            DVD => False,
+            MEDIA => False,
+            LABEL => Nil,
+            UUID => Nil,
+        );
+        self.printd: 'getDiscMetadata(): Asking udevadm for disc metadata';
+        my $data = run 'udevadm', 'info', '-q','env','-n',$.device, :err('/dev/null'.IO.open), :out;
+        for $data.out.lines -> $line
+        {
+            # Make it writeable
+            my $content = $line;
+            if $content ~~ /ID_CDROM_MEDIA_DVD\=1/
+            {
+                %meta<DVD> = True;
+            }
+            elsif $content ~~ /ID_CDROM_MEDIA_BD\=1/
+            {
+                %meta<BD> = True;
+            }
+            elsif $content ~~ /ID_CDROM_MEDIA\=1/
+            {
+                %meta<MEDIA> = True;
+            }
+            elsif $content ~~ s/^ID_FS_LABEL\=//
+            {
+                %meta<LABEL> = $content.chomp;
+            }
+            elsif $content ~~ s/^ID_FS_UUID\=//
+            {
+                %meta<UUID> = $content.chomp;
+            }
+        }
+        # If we have a BD or DVD, store this in the cache
+        if %meta<DVD> || %meta<BD>
+        {
+            %cache<changed> = time;
+            %cache<data> = %meta;
+        }
+        return %meta;
+    }
 }
 
 #| Base class for backends
@@ -1476,62 +1532,6 @@ class LazyBrake is lazyBase
             }
             return $filename;
         }
-    }
-
-    #| Retrieve metadata about the inserted disc
-    method getDiscMetadata() returns Hash
-    {
-        state %cache = (
-            changed => 0,
-            data => Nil
-        );
-        # If it has changed the last three seconds, use the cached one
-        if %cache<changed> > (time - 3)
-        {
-            self.printd: 'getDiscMetadata(): using cached disc metadata';
-            return %cache<data>;
-        }
-        my %meta = (
-            BD => False,
-            DVD => False,
-            MEDIA => False,
-            LABEL => Nil,
-            UUID => Nil,
-        );
-        self.printd: 'getDiscMetadata(): Asking udevadm for disc metadata';
-        my $data = run 'udevadm', 'info', '-q','env','-n',$.device, :err('/dev/null'.IO.open), :out;
-        for $data.out.lines -> $line
-        {
-            # Make it writeable
-            my $content = $line;
-            if $content ~~ /ID_CDROM_MEDIA_DVD\=1/
-            {
-                %meta<DVD> = True;
-            }
-            elsif $content ~~ /ID_CDROM_MEDIA_BD\=1/
-            {
-                %meta<BD> = True;
-            }
-            elsif $content ~~ /ID_CDROM_MEDIA\=1/
-            {
-                %meta<MEDIA> = True;
-            }
-            elsif $content ~~ s/^ID_FS_LABEL\=//
-            {
-                %meta<LABEL> = $content.chomp;
-            }
-            elsif $content ~~ s/^ID_FS_UUID\=//
-            {
-                %meta<UUID> = $content.chomp;
-            }
-        }
-        # If we have a BD or DVD, store this in the cache
-        if %meta<DVD> || %meta<BD>
-        {
-            %cache<changed> = time;
-            %cache<data> = %meta;
-        }
-        return %meta;
     }
 
     #| Check if a disc is present in the drive
