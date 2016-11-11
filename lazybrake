@@ -964,11 +964,32 @@ class backend_mmkv is lazyBackend
             };
         }
         # makemkvcon doesn't let us specify the filename, so we rename it manually
-        # FIXME: If this file already exists, this will break badly
-        ('title'~sprintf("%#02d",$title)~'.mkv').IO.rename($filename);
+        my $makemkvName = self.guessFilename(:$internalTitle, :$title, :%metadata);
+        self.printd: 'guessFilename: guessed filename to be '~$makemkvName;
+
+        if $filename.IO.e
+        {
+            die: $filename~': already exists, unable to rename '~$makemkvName~' to it. You should manually move '~$makemkvName~' to '~$filename~' and then re-run lazybrake';
+        }
+        $makemkvName.IO.rename($filename);
         return {
             success => True
         };
+    }
+
+    method guessFilename (Int :$title!, :%metadata!, Int :$internalTitle!)
+    {
+        my $name = 'title'~sprintf("%#02d",$internalTitle)~'.mkv';
+        if $name.IO.e
+        {
+            return $name;
+        }
+        $name = 'title'~sprintf("%#02d",$title)~'.mkv';
+        if $name.IO.e
+        {
+            return $name;
+        }
+        die 'guessFilename: failed to guess the makemkv output filename. This is either a deficiency in lazybrake or a problem with makemkv';
     }
 
     #| Performs a scan with makemkvcon info
