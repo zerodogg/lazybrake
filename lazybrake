@@ -219,7 +219,7 @@ class lazyBase
             UUID => Nil,
         );
         self.printd: 'getDiscMetadata(): Asking udevadm for disc metadata';
-        my $data = run 'udevadm', 'info', '-q','env','-n',$.device, :err('/dev/null'.IO.open), :out;
+        my $data = self.getInputFrom(['udevadm','info','-q','env','-n',$.device],'out');
         for $data.out.lines -> $line
         {
             # Make it writeable
@@ -263,7 +263,7 @@ class lazyBackend is lazyBase
     {
         my %info = ();
 
-        my $in = run 'mp4info',$file, :out, :err;
+        my $in = self.getInputFrom(['mp4info',$file],'both');
         for $in.out.lines -> $entry is copy
         {
             next if $entry !~~ /^\d/;
@@ -533,7 +533,6 @@ class backend_scan_lsdvd is lazyBackend
         # -a = list audio streams
         # -s = list subtitles
         my @cmd = ('lsdvd','-Oh','-a','-s',$.device);
-        my $null = '/dev/null'.IO.open;
         my $in = self.getInputFrom(@cmd);
         my $currentTitle = -1;
         my $currentSubtype;
@@ -622,9 +621,7 @@ class backend_HDB is lazyBackend
     #| Parses a HandBrakeCLI --scan output
     method parseHDBScan (*@cmd) returns Hash
     {
-        my $null = '/dev/null'.IO.open;
-        self.printd: "Running: "~@cmd.join(' ');
-        my $in = run @cmd, :err, :out($null);
+        my $in = self.getInputFrom(@cmd,'err');
         my $currentTitle = -1;
         my $currentSubtype;
         my %data = (
@@ -995,10 +992,8 @@ class backend_mmkv is lazyBackend
     #| Performs a scan with makemkvcon info
     method scan () returns Hash
     {
-        my $null = '/dev/null'.IO.open;
         my @cmd = ('makemkvcon','info','dev:'~$.device,'--robot');
-        self.printd: "Running: "~@cmd.join(' ');
-        my $in = run @cmd, :out, :err($null);
+        my $in = self.getInputFrom(@cmd,'out');
 
         # Keeping track of the previously seen message type, so that we can
         # reset sInfoState whenever the message type changes, and thus avoid
