@@ -931,13 +931,32 @@ class backend_mmkv is lazyBackend
         }
     }
 
+    method filterQuotes ($on is copy)
+    {
+        if $on
+        {
+            $on ~~ s:g/^\"(.*)\"$/$0/;
+        }
+        return $on;
+    }
+
     #| Rips a single title using the settings provided
     method ripSingleTitle(Int :$title!, :$filename!, :%metadata!, :$preset = 'Normal', Bool :$no-dvdnav is copy = False) returns Hash
     {
         # First verify that no unsupported features have been requested
         self.unsupportedFeatureCheck();
 
-        my @command = ('makemkvcon','--noscan','--message=-stderr','--progress=-stdout','mkv','dev:'~$.device,$title,'./');
+        my $internalTitle = %metadata<makemkvInternalTitle>;
+        if $internalTitle
+        {
+            self.printd: 'Using internal title '~$internalTitle~' to rip real title '~$title;
+        }
+        else
+        {
+            $internalTitle = $title;
+        }
+
+        my @command = ('makemkvcon','--noscan','--message=-stderr','--progress=-stdout','mkv','dev:'~$.device,$internalTitle,'./');
         if self.runForgeroundProcess(@command) == False
         {
             return {
@@ -982,6 +1001,8 @@ class backend_mmkv is lazyBackend
         # Used to keep track of roundtrips through the loop where no data was parsed
         # so that we can time out if it takes too long (defined as 20 seconds of inactivity).
         my $noReplyNo = 0;
+        # Used to store "playlist to title" maps for bluray
+        my %plToTitle;
         while $in.exitcode == -1 || ($currTitle == -1 && $noReplyNo < 200)
         {
             $noReplyNo++;
@@ -999,6 +1020,20 @@ class backend_mmkv is lazyBackend
                 $opts ~~ s/^<[^:]>+://;
                 # Parse out the various components of the current line
                 my ($code,$flags,$count,$message,$data) = $opts.split(',');
+                # MSG is a generic message. We use it to parse out 'File
+                # 00000.mpls was added as title #0' messages.
+                if $type eq 'MSG'
+                {
+                    if $code eq 'MSG:3307'
+                    {
+                        my @entries = $opts.split(',');
+                        my $pl = self.filterQuotes(@entries[5]);
+                        my $title = self.filterQuotes(@entries[6]);
+                        self.printd: 'Identified '~$pl~' as internal makemkv title '~$title;
+                        %plToTitle{$pl} = $title;
+                    }
+                    next;
+                }
                 # If the previous line type doesn't match the current type,
                 # and the title is -1 (ie. no title yet), reset sInfoState.
                 if $prev ne $type && $currTitle != -1
@@ -1008,14 +1043,8 @@ class backend_mmkv is lazyBackend
                 # Store the previous type
                 $prev = $type;
                 # Filter away quotes from message and data, if we have them
-                if $message
-                {
-                    $message ~~ s:g/^\"(.*)\"$/$0/;
-                }
-                if $data
-                {
-                    $data ~~ s:g/^\"(.*)\"$/$0/;
-                }
+                $message = self.filterQuotes($message);
+                $data = self.filterQuotes($data);
                 # TINFO provides basic information about a title. We use it to
                 # fetch the title number and then length of said title
                 if $type eq 'TINFO'
@@ -1024,11 +1053,15 @@ class backend_mmkv is lazyBackend
                     # identifying the title number
                     if ($flags == 24 || $flags == 16)
                     {
+                        $message = self.filterQuotes($message);
                         $currTitle = $message;
                         $currTitle ~~ s:g/:s\D+//;
                         $currTitle = $currTitle.Int;
                         self.printd: 'Identified title '~$currTitle;
-                        %titles<titles>{$currTitle} = {duration => {}};
+                        %titles<titles>{$currTitle} = {
+                            duration => {},
+                            makemkvInternalTitle => %plToTitle{$message}
+                        };
                         %titles<titleOrder>.push($currTitle);
                         if $delayedLength
                         {
