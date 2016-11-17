@@ -67,7 +67,10 @@ class lazyBase
         }
     }
 
-    #| Error out
+    #| Error out. If canRecover is true then a recoverableError exception will
+    #| be thrown, indicating to our caller that the error is specific to this
+    #| disc, allowing us to recover from the error by ejecting the disc and
+    #| getting a new disc from the user.
     method errOut(Str $reason, Int $retVal = 1, Bool :$canRecover = False)
     {
         $*ERR.print($reason~"\n");
@@ -729,7 +732,7 @@ class backend_HDB is lazyBackend
         {
             if !$success
             {
-                self.errOut: "Scanning failed, try to enable dvdnav";
+                self.errOut: "Scanning failed, try to enable dvdnav", canRecover => True;
             }
             return %result;
         }
@@ -966,7 +969,7 @@ class backend_mmkv is lazyBackend
 
         if $filename.IO.e
         {
-            die: $filename~': already exists, unable to rename '~$makemkvName~' to it. You should manually move '~$makemkvName~' to '~$filename~' and then re-run lazybrake';
+            self.errOut: $filename~': already exists, unable to rename '~$makemkvName~' to it. You should manually move '~$makemkvName~' to '~$filename~' and then re-run lazybrake', canRecover => True;
         }
         $makemkvName.IO.rename($filename);
         return {
